@@ -10,6 +10,7 @@ function App() {
     const response = await axios.post("http://localhost:8005/menu/test", { text: transcript });
     console.log(response.data);
   };
+
   
   return (
       <div>
