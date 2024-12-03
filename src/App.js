@@ -3,14 +3,12 @@ import SpeechRecognition, { useSpeechRecognition } from "react-speech-recognitio
 import axios from "axios";
 
 function App() {
-  const [order, setOrder] = useState("");
   const { transcript, resetTranscript } = useSpeechRecognition();
   
   const handleSubmit = async () => {
     const response = await axios.post("http://localhost:8005/menu/test", { text: transcript });
     console.log(response.data);
   };
-
   
   return (
       <div>
