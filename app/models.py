@@ -1,7 +1,7 @@
 import enum
 
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Table, Enum
-from sqlalchemy.orm import relationship, MANYTOMANY
+from sqlalchemy.orm import relationship
 from datetime import datetime
 from .database import Base
 
@@ -35,7 +35,6 @@ class OrderPizzaDough(Base):
     dough_id = Column(Integer, ForeignKey("doughs.id", ondelete="CASCADE"), primary_key=True)
     quantity = Column(Integer, nullable=False, default=1)  # Liczba zamówionych pizz
 
-    # Relacje do Order, Pizza i PizzaDough
     order = relationship("Order", back_populates="order_pizza_doughs")
     pizza = relationship("Pizza")
     dough = relationship("PizzaDough")

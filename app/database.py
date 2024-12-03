@@ -12,6 +12,6 @@ Base = declarative_base()
 def get_db():
     db = SessionLocal()
     try:
-        yield db  # Sesja jest przekazywana do endpointu
+        yield db
     finally:
-        db.close()  # Zamykanie sesji po zakończeniu pracy
+        db.close()
