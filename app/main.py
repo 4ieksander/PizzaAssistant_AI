@@ -50,6 +50,44 @@ def call_and_initiate_order(request: InitOrderRequest, db: Session = Depends(get
     db.refresh(order)
     return OrderSchema.model_validate(order)
 
+@app.post("/analyze_transcription")
+def analyze_transcription(transcription: str):
+    """
+    Analyze the given transcription and return the result.
+    """
+    log.info(f"Analyzing transcription: {transcription}")
+    return {"transcription": transcription}
+
+@app.put("/analyze_transcription")
+def analyze_transcription(transcription: str):
+    """
+    Analyze the given transcription and return the result.
+    """
+    log.info(f"Analyzing transcription: {transcription}")
+    return {"transcription": transcription}
+
+@app.get("/current_order_data")
+def get_current_order_data():
+    """
+    Get the data of the current order.
+    """
+    return {"current_order": "data"}
+
+
+
+@app.get("/summarise_order")
+def summarise_order():
+    """
+    Summarise the current order.
+    """
+    return {"order": "summary"}
+
+@app.get("/confirm_order")
+def confirm_order():
+    """
+    Confirm the current order.
+    """
+    return {"order": "confirmed"}
 
 # # Include routers
 # app.include_router(pizzas.router, prefix="/pizzas", tags=["pizzas"])
