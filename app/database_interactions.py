@@ -1,6 +1,6 @@
 # /backend/database_interactions.py
 from sqlalchemy.orm import Session
-from .models import Pizza, Ingredient, Order, Client, Dough, IngredientCategory
+from .models import Pizza, Ingredient, Order, Client, Dough
 
 
 # Pizza CRUD
@@ -52,7 +52,7 @@ def add_ingredient(session: Session, name: str, price: float, category: str, in_
     new_ingredient = Ingredient(
         name=name,
         price=price,
-        category=IngredientCategory(category),
+        category=category,
         in_stock=in_stock,
     )
     session.add(new_ingredient)
@@ -63,7 +63,7 @@ def get_all_ingredients(session: Session):
     return session.query(Ingredient).all()
 
 def get_ingredients_by_category(session: Session, category: str):
-    return session.query(Ingredient).filter(Ingredient.category == IngredientCategory(category)).all()
+    return session.query(Ingredient).filter(Ingredient.category == category).all()
 
 def update_ingredient(session: Session, ingredient_id: int, **kwargs):
     ingredient = session.get(Ingredient, ingredient_id)

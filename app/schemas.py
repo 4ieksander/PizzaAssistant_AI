@@ -1,4 +1,4 @@
-# backend/app/schemas.py
+﻿# backend/app/schemas.py
 from datetime import datetime
 import dataclasses
 from pydantic import BaseModel, ConfigDict
@@ -45,12 +45,12 @@ class StreetSchema(BaseModel):
 
 
 class ClientSchema(BaseModel):
-    id: int
-    phone: str
-    street: 'StreetSchema' = None
-    orders: List[int] = dataclasses.field(default_factory=list)  # Zwracamy tylko ID zamówień
-
-    model_config = ConfigDict(from_attributes=True)
+	id: int
+	phone: str
+	street: 'StreetSchema' = None
+	orders: List[int] = dataclasses.field(default_factory=list)
+	
+	model_config = ConfigDict(from_attributes=True)
 
 # class AddressSchema(BaseModel):
 # 	id: int
