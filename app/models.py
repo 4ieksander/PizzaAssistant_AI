@@ -55,17 +55,18 @@ class Dough(Base):
 class Client(Base):
     __tablename__ = "clients"
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    phone = Column(String, nullable=False)
+    phone = Column(String, nullable=False, unique=True)
     street_id = Column(Integer, ForeignKey("streets.id"), nullable=True)
-    street = relationship("Street", back_populates="clients")
+    street = relationship("Street", back_populates="clients", lazy="joined")
     apartment = Column(String, nullable=True)
     orders = relationship("Order", back_populates="client")
+
     
 class Order(Base):
     __tablename__ = "orders"
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     order_start_time = Column(DateTime, default=datetime.utcnow)
-    total_price = Column(Float, nullable=True)
+    total_price = Column(Float, nullable=False, default=0)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     client = relationship("Client", back_populates="orders")
     pizzas = relationship("Pizza", secondary=order_pizzas ,back_populates="orders")
@@ -74,6 +75,7 @@ class Street(Base):
     __tablename__ = "streets"
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     name = Column(String, nullable=False)
+    clients = relationship("Client", back_populates="street")
     
     
 #     # addresses = relationship("Address", back_populates="street")
