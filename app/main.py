@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .schemas import OrderSchema, InitOrderRequest
 from .models import Pizza, Ingredient, Order, Client
-
+from .routers import analyze_order, orders
 from .database import SessionLocal, get_db
 import logging
 
@@ -26,6 +26,8 @@ app.add_middleware(
     allow_headers=["*"],  # Pozwól na wszystkie nagłówki
 )
 
+app.include_router(analyze_order.router, tags=["analyze_order"])
+app.include_router(orders.router, prefix='/orders' , tags=["orders"])
 
 
 @app.post("/init-order", response_model=OrderSchema)
