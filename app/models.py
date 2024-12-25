@@ -47,8 +47,8 @@ class Ingredient(Base):
 class Dough(Base):
     __tablename__ = "doughs"
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    big_size = Column(Boolean, default=False)
-    on_thick_pastry = Column(Boolean, default=False)
+    big_size = Column(Boolean, nullable=True)
+    on_thick_pastry = Column(Boolean, nullable=True)
     without_gluten = Column(Boolean, default=False)
     price = Column(Float, nullable=False)
 
