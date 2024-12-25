@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .schemas import OrderSchema, InitOrderRequest
 from .models import Pizza, Ingredient, Order, Client
-from .routers import analyze_order, orders
+from .routers import analyze_order, orders, conversation
 from .database import SessionLocal, get_db
 import logging
 
@@ -28,7 +28,7 @@ app.add_middleware(
 
 app.include_router(analyze_order.router, tags=["analyze_order"])
 app.include_router(orders.router, prefix='/orders' , tags=["orders"])
-
+app.include_router(conversation.router, tags=["conversations"])
 
 @app.post("/init-order", response_model=OrderSchema)
 def call_and_initiate_order(request: InitOrderRequest, db: Session = Depends(get_db)):

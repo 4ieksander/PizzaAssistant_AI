@@ -25,7 +25,8 @@ order_pizzas = Table(
     Column("order_id", Integer, ForeignKey("orders.id", ondelete="CASCADE"), primary_key=True),
     Column("pizza_id", Integer, ForeignKey("pizzas.id", ondelete="CASCADE"), primary_key=True),
     Column("dough_id", Integer, ForeignKey("doughs.id", ondelete="CASCADE"), primary_key=True),
-    Column("quantity", Integer, nullable=False)
+    Column("quantity", Integer, nullable=False),
+	Column("is_partial", Boolean, nullable=False)
 )
 
 class Pizza(Base):
