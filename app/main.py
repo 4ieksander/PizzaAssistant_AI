@@ -9,7 +9,6 @@ from .schemas import OrderSchema, InitOrderRequest
 from .models import Pizza, Ingredient, Order, Client
 
 from .database import SessionLocal, get_db
-from .routers import pizzas, ingredients
 import logging
 
 console_handler = logging.StreamHandler()

@@ -1,0 +1,58 @@
+-- Wypełnienie tabeli ingredients
+INSERT INTO ingredients (name, category, price) VALUES
+('Tomato', 'vegetable', 0.5),
+('Mozzarella', 'dairy', 1.5),
+('Basil', 'vegetable', 0.3),
+('Pepperoni', 'meat', 2.0),
+('Mushroom', 'vegetable', 0.8),
+('Parmesan', 'dairy', 1.2);
+
+-- Wypełnienie tabeli doughs
+INSERT INTO doughs (big_size, on_thick_pastry, without_gluten, price) VALUES
+(false, false, false, 3.0),
+(true, false, false, 5.0),
+(false, true, false, 4.0),
+(true, true, true, 6.0);
+
+-- Wypełnienie tabeli pizzas
+INSERT INTO pizzas (name, in_menu) VALUES
+('Margherita', true),
+('Pepperoni', true),
+('Vegetarian', true);
+
+-- Wypełnienie tabeli pizza_ingredients
+INSERT INTO pizza_ingredients (pizza_id, ingredient_id) VALUES
+(1, 1), -- Margherita: Tomato
+(1, 2), -- Margherita: Mozzarella
+(1, 3), -- Margherita: Basil
+(2, 1), -- Pepperoni: Tomato
+(2, 2), -- Pepperoni: Mozzarella
+(2, 4), -- Pepperoni: Pepperoni
+(3, 1), -- Vegetarian: Tomato
+(3, 2), -- Vegetarian: Mozzarella
+(3, 3), -- Vegetarian: Basil
+(3, 5); -- Vegetarian: Mushroom
+
+-- Wypełnienie tabeli pizza_doughs
+INSERT INTO pizza_doughs (pizza_id, dough_id) VALUES
+(1, 1), -- Margherita: small, thin, with gluten
+(1, 2), -- Margherita: big, thin, with gluten
+(2, 1), -- Pepperoni: small, thin, with gluten
+(2, 3), -- Pepperoni: small, thick, with gluten
+(3, 4); -- Vegetarian: big, thick, gluten-free
+
+-- Wypełnienie tabeli clients
+INSERT INTO clients (phone, address) VALUES
+('123-456-789', '123 Pizza Street'),
+('987-654-321', '321 Tomato Avenue');
+
+-- Wypełnienie tabeli orders
+INSERT INTO orders (order_start_time, total_price, client_id) VALUES
+('2024-12-08 18:00:00', 12.5, 1),
+('2024-12-08 19:00:00', 15.0, 2);
+
+-- Wypełnienie tabeli order_pizzas
+INSERT INTO order_pizzas (order_id, pizza_id) VALUES
+(1, 1), -- Order 1: Margherita
+(1, 3), -- Order 1: Vegetarian
+(2, 2); -- Order 2: Pepperoni
