@@ -66,7 +66,7 @@ def _fill_db_item(session: Session, order_id: int, slot: dict) -> int:
     
     for (ing_name, ing_qty) in slot["extras"]:
         ing_obj = session.query(Ingredient).filter(Ingredient.name.ilike(ing_name)).first()
-        if ing_obj:
+        if ing_obj and ing_obj not in new_item.additional_ingredients_pivot:
             try:
                 new_additional_ingredient = AdditionalIngredient(order_pizza_id=new_item.id,
                                                                                    ingredient_id=ing_obj.id,
@@ -74,7 +74,6 @@ def _fill_db_item(session: Session, order_id: int, slot: dict) -> int:
                 session.add(new_additional_ingredient)
             except:
                 pass
-            slot["extras"] = []
     session.commit()
 
     return new_item.id
@@ -109,7 +108,9 @@ def _update_db_item(session: Session, db_id: int, slot: dict):
     
     for (ing_name, ing_qty) in slot["extras"]:
         ing_obj = session.query(Ingredient).filter(Ingredient.name.ilike(ing_name)).first()
-        if ing_obj:
+        if session.query(AdditionalIngredient).filter(AdditionalIngredient.order_pizza_id == db_id, AdditionalIngredient.ingredient_id == ing_obj.id).first():
+            continue
+        if ing_obj and ing_obj not in db_item.additional_ingredients_pivot:
             try:
                 new_additional_ingredient = AdditionalIngredient(order_pizza_id=db_id,
                                                                                    ingredient_id=ing_obj.id,
@@ -117,7 +118,6 @@ def _update_db_item(session: Session, db_id: int, slot: dict):
                 session.add(new_additional_ingredient)
             except:
                 pass
-            slot["extras"] = []
     db_item.is_partial = bool(slot["missing_info"])
 
     session.commit()

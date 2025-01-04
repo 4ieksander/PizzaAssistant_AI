@@ -59,7 +59,7 @@ class Dough(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     big_size = Column(Boolean, nullable=True)
     on_thick_pastry = Column(Boolean, nullable=True)
-price = Column(Float, nullable=False)
+    price = Column(Float, nullable=False)
 
 class Client(Base):
     __tablename__ = "clients"

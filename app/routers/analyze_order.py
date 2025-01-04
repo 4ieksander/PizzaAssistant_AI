@@ -7,6 +7,8 @@ Wykrywa kilka osobnych pizz różniących się atrybutami ciasta, dopasowuje naz
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Tuple
+
+from sqlalchemy import false
 from sqlalchemy.orm import Session
 import spacy
 from fuzzywuzzy import fuzz
@@ -48,7 +50,6 @@ REFERENCE_WORDS_FOR_NEXT = {
     "czwarta": 4
 }
 
-
 def _map_synonym_with_dict(word: str, synonyms_dict: dict) -> str:
     """
     Funkcja pomocnicza do mapowania słowa na klucz, jeśli występuje w słowniku synonimów.
@@ -79,9 +80,6 @@ def detect_number_if_any(token) -> int:
 
 
 def detect_multiplier_if_any(token) -> int:
-    """
-    Podwójny, potrójny, poczwórny => zwiększa wielokrotność.
-    """
     if token.lemma_ in POLISH_MULTIPLIERS:
         return POLISH_MULTIPLIERS[token.lemma_]
     return 1
@@ -175,26 +173,26 @@ def _assign_attributes(tokens, slots: List[dict], all_pizzas: List[str],
     Przypisuje do slotów atrybuty takie jak nazwa pizzy, rozmiar, grubość.
     Jeśli nie ma żadnego slotu, zapisuje w 'common_attributes', by potem scalić je do wszystkich.
     """
+    last_count = None  # zapamiętamy liczbę sztuk
     i = 0
     while i < len(tokens):
         t = tokens[i]
-        txt = t.text
-        lemma = t.lemma_
-
-        # Dopasowanie nazwy pizzy
-        matched_pizza = fuzzy_match_pizza(txt, all_pizzas)
-        if matched_pizza:
-            if not slots:
-                slots.append(_create_slot())
-
-            slot = slots[-1]
-            slot["pizza"] = matched_pizza
-            if i > 0 and tokens[i - 1].lemma_ in POLISH_NUMBERS:
-                slot["pizza_count"] = POLISH_NUMBERS[tokens[i - 1].lemma_]
+        txt = t.text.lower()
+        lemma = t.lemma_.lower()
+        
+        #liczebnik
+        if lemma in POLISH_NUMBERS or t.like_num:
+            if t.like_num:
+                try:
+                    last_count = int(t.text)
+                except:
+                    last_count = None
+            else:
+                last_count = POLISH_NUMBERS.get(lemma, None)
             i += 1
             continue
-
-        # Rozmiar
+        
+        #rozmiar
         mapped_size = _map_synonym_with_dict(lemma, SIZE_SYNONYMS)
         if mapped_size in ("duża", "mała"):
             if slots:
@@ -203,57 +201,169 @@ def _assign_attributes(tokens, slots: List[dict], all_pizzas: List[str],
                 common_attributes["dough"]["big_size"] = (mapped_size == "duża")
             i += 1
             continue
-
-        # Grubość
+        
+        #grubość
         mapped_thick = _map_synonym_with_dict(lemma, THICKNESS_SYNONYMS)
         if mapped_thick in ("gruba", "cienka"):
-            on_thick = True if mapped_thick == "gruba" else False
-
-            assigned = False
-            if i > 0 and tokens[i - 1].lemma_ in REFERENCE_WORDS_FOR_NEXT:
-                slot_idx = REFERENCE_WORDS_FOR_NEXT[tokens[i - 1].lemma_] - 1
-                if slot_idx < len(slots):
-                    slots[slot_idx]["dough"]["on_thick_pastry"] = on_thick
-                    assigned = True
-
-            if not assigned:
-                if slots:
-                    slots[-1]["dough"]["on_thick_pastry"] = on_thick
-                else:
-                    common_attributes["dough"]["on_thick_pastry"] = on_thick
-
+            on_thick = (mapped_thick == "gruba")
+            if slots:
+                slots[-1]["dough"]["on_thick_pastry"] = on_thick
+            else:
+                common_attributes["dough"]["on_thick_pastry"] = on_thick
+            i += 1
+            continue
+        
+        # nazwa pizzy
+        matched_pizza = fuzzy_match_pizza(txt, all_pizzas)
+        if matched_pizza:
+            if not slots:
+                slots.append(_create_slot())
+            
+            slot = slots[-1]
+            slot["pizza"] = matched_pizza
+            
+            if last_count is not None:
+                slot["pizza_count"] = last_count
+                last_count = None
             i += 1
             continue
         i += 1
 
 
-def _assign_extras(tokens, slots: List[dict], all_ingredients: List[str],
-                    common_attributes: dict):
+def _assign_extras_trigram(tokens, slots: List[dict], all_ingredients: List[str],
+                           common_attributes: dict):
     """
-    Wyszukuje w tekście wzorce typu: 'z sosem', 'dodatkowy ser', itp.
-    Wykorzystuje heurystyki liczby i mnożnika (np. 'trzema sosami', 'podwójny ser').
+    Szuka w tekście 3-gramów w stylu:
+      - [z/dodatkową], [podwójną/potrójną?], [nazwę składnika]
+    lub odwrotny wariant itd.
+    Jeżeli znajdzie, to wstawia do slots[-1]["extras"] np.: (składnik, qty).
     """
     i = 0
-    while i < len(tokens):
-        t = tokens[i]
-        txt = t.text.lower()
+    if i == len(tokens) - 2:
+        if _about_additional_ing_words(tokens[i].lemma_):
+            best_ing, sc = fuzzy_find_ingredient(tokens[i+1].text.lower(), all_ingredients)
+            if sc > 70 and best_ing:
+                qty = 1
+                if slots:
+                    slots[-1]["extras"].append((best_ing, qty))
+                else:
+                    common_attributes["extras"].append((best_ing, qty))
+                    
+    while i <= len(tokens) - 3:
+        if _about_additional_ing_words(tokens[i].lemma_) and _about_additional_ing_words(tokens[i+1].lemma_) and i < len(tokens) - 4:
+            i += 1  # aby wykrywanie rozbudowanych fraz było bardziej dokładne
+        tri = tokens[i], tokens[i+1], tokens[i+2]
+        tri_text = [tok.text.lower() for tok in tri]
+        tri_lemma = [tok.lemma_.lower() for tok in tri]
+        log.info("TRIGRAM: %s", tri_text)
+    
+        # CASE A: [z|dodatk*], [multipler], [ingredient]
+        if _about_additional_ing_words(tri_lemma[0]):
+            multiplier = detect_multiplier_if_any(tri[1])
+            best_ing, sc = fuzzy_find_ingredient(tri_text[2], all_ingredients)
+            if sc > 70 and best_ing:
+                qty = multiplier
+                if slots:
+                    slots[-1]["extras"].append((best_ing, qty))
+                else:
+                    common_attributes["extras"].append((best_ing, qty))
+                    
+                log.info("Dodano składnik: %s x %s", best_ing, qty)
+                if len(tokens) >= i + 4:
+                    _check_for_another_ing_in_pharse(tokens[i + 3:], all_ingredients, slots, common_attributes)
+                
+                i += 3
+                continue
+ 
+        # CASE B: [z|dodatk*], [ingredient], [multipler/ "i" / "oraz"], OPT [second ingredient]
+        if _about_additional_ing_words(tri_lemma[0]):
+            best_ing, sc = fuzzy_find_ingredient(tri_text[1], all_ingredients)
+            if sc > 70 and best_ing:
+                if tri_lemma[2] in ("i", "oraz") and len(tokens) >= i + 3:
+                    best_second_ing, sc2 = fuzzy_find_ingredient(tokens[i+3], all_ingredients)
+                    if sc2 > 70 and best_second_ing:
+                        slots[-1]["extras"].append((best_second_ing, 1))
+                    qty = 1
+                else:
+                    multiplier = detect_multiplier_if_any(tri[2])
+                    qty = multiplier if multiplier > 1 else 1
+                if not qty:
+                    qty = 1
+                if slots:
+                    slots[-1]["extras"].append((best_ing, qty))
+                else:
+                    common_attributes["extras"].append((best_ing, qty))
+                if len(tokens) >= i + 3:
+                    _check_for_another_ing_in_pharse(tokens[i + 3:], all_ingredients, slots, common_attributes)
+                
+                i += 3
+                continue
 
-        if i > 0:
-            prev_txt = tokens[i - 1].text.lower()
-            if "z" in prev_txt or "dodatk" in prev_txt:
-                    best_ing, ing_score = fuzzy_find_ingredient(txt, all_ingredients)
-                    if ing_score > 70:
-                            ing_qty = 1
-                            if i - 2 >= 0:
-                                    ing_qty *= detect_number_if_any(tokens[i - 2])
-                                    ing_qty *= detect_multiplier_if_any(tokens[i - 2])
-
-                            if slots:
-                                slots[-1]["extras"].append((best_ing, ing_qty))
-                            else:
-                                common_attributes["extras"].append((best_ing, ing_qty))
+        # CASE C: [multipler], [dodatk*|z], [ingredient]
+        if detect_multiplier_if_any(tri[0]) > 1 and _about_additional_ing_words(tri_lemma[1]):
+            best_ing, sc = fuzzy_find_ingredient(tri_text[2], all_ingredients)
+            if sc > 70 and best_ing:
+                qty = detect_multiplier_if_any(tri[0])
+                if slots:
+                    slots[-1]["extras"].append((best_ing, qty))
+                else:
+                    common_attributes["extras"].append((best_ing, qty))
+                if len(tokens) >= i + 3:
+                    _check_for_another_ing_in_pharse(tokens[i + 3:], all_ingredients, slots, common_attributes)
+                
+                i += 3
+                continue
+    
         i += 1
 
+def _about_additional_ing_words(lemma):
+    if "dodatk" in lemma.lower() or "z" in lemma.lower():
+        return True
+    return False
+
+def _check_for_additional_ing(tokens, all_ingredients, slots, common_attributes):
+    log.info(tokens)
+    if tokens[0].lemma_ in ("i", "oraz") and len(tokens) > 1:
+        best_ing, sc = fuzzy_find_ingredient(tokens[1].text.lower(), all_ingredients)
+        if sc > 70 and best_ing:
+            qty = detect_multiplier_if_any(tokens[0])
+            if slots:
+                slots[-1]["extras"].append((best_ing, qty))
+            else:
+                common_attributes["extras"].append((best_ing, qty))
+    elif tokens[1].lemma_ in ("i", "oraz") and len(tokens) > 2:
+        best_ing, sc = fuzzy_find_ingredient(tokens[2].text.lower(), all_ingredients)
+        if sc > 70 and best_ing:
+            if slots:
+                slots[-1]["extras"].append((best_ing, 1))
+            else:
+                common_attributes["extras"].append((best_ing, 1))
+    elif tokens[0].lemma_ in ("i", "oraz") and len(tokens) > 2:
+        best_ing, sc = fuzzy_find_ingredient(tokens[2].text.lower(), all_ingredients)
+        if sc > 70 and best_ing:
+            qty = detect_multiplier_if_any(tokens[1])
+            if slots:
+                slots[-1]["extras"].append((best_ing, qty))
+            else:
+                common_attributes["extras"].append((best_ing, qty))
+
+def _check_for_another_ing_in_pharse(tokens, all_ingredients, slots, common_attributes):
+    best_ing, sc = fuzzy_find_ingredient(tokens[0].text.lower(), all_ingredients)
+    if sc > 70 and best_ing:
+        if slots:
+            slots[-1]["extras"].append((best_ing, 1))
+        else:
+            common_attributes["extras"].append((best_ing, 1))
+    else:
+        best_ing, sc = fuzzy_find_ingredient(tokens[1].text.lower(), all_ingredients)
+        if sc > 70 and best_ing:
+            qty = detect_multiplier_if_any(tokens[0])
+            if slots:
+                slots[-1]["extras"].append((best_ing, qty))
+            else:
+                common_attributes["extras"].append((best_ing, qty))
+                
+            
 
 class PizzaParser:
     def __init__(self, db: Session):
@@ -261,6 +371,9 @@ class PizzaParser:
         self.nlp = nlp
         self.all_pizzas = [p.name.lower() for p in db.query(Pizza).all()]
         self.all_ingredients = [ing.name.lower() for ing in db.query(Ingredient).all()]
+        self.sauce_list = [
+            ing.name.lower() for ing in db.query(Ingredient).filter(Ingredient.category == "sauce")
+        ]
 
     def parse_order(self, text: str) -> List[dict]:
         doc = self.nlp(text.lower())
@@ -276,7 +389,7 @@ class PizzaParser:
         slots: List[dict] = []
 
         _assign_attributes(tokens, slots, self.all_pizzas, common_attributes)
-        _assign_extras(tokens, slots, self.all_ingredients, common_attributes)
+        _assign_extras_trigram(tokens, slots, self.all_ingredients, common_attributes)
 
         # 4) Scalamy atrybuty wspólne, jeśli nie zostały one nadpisane
         for s in slots:
@@ -289,14 +402,13 @@ class PizzaParser:
         # 5) Wyznaczamy braki
         for slot in slots:
             if slot["pizza"] is None:
-                slot["missing_info"].append("pizza_name")
+                slot["missing_info"].append("Nazwa pizzy")
             if slot["dough"]["big_size"] is None:
-                slot["missing_info"].append("size")
+                slot["missing_info"].append("Rozmiar")
             if slot["dough"]["on_thick_pastry"] is None:
-                slot["missing_info"].append("thickness")
+                slot["missing_info"].append("Grubość ciasta")
 
         return slots
-    
     def parse_order_in_context(self, text: str, existing_slots: List[dict]) -> List[dict]:
         """
         Wersja parsera, która:
@@ -306,18 +418,23 @@ class PizzaParser:
         doc = self.nlp(text.lower())
         tokens = list(doc)
     
+        # Najpierw standardowe:
         new_slots: List[dict] = []
-        _detect_slots(tokens, new_slots)
+        _detect_slots(tokens, new_slots)  # Być może brak 'pizza' => new_slots będzie puste
     
+        # Tutaj przypisujemy atrybuty
+        # Ale jeśli new_slots jest puste, to 'wymusimy' przypisanie do existing_slots
         slots_to_fill = new_slots if new_slots else existing_slots
     
+        # Przypisujemy do slots_to_fill
         common_attributes = {
             "dough": {"big_size": None, "on_thick_pastry": None},
             "extras": []
         }
         _assign_attributes(tokens, slots_to_fill, self.all_pizzas, common_attributes)
-        _assign_extras(tokens, slots_to_fill, self.all_ingredients, common_attributes)
+        _assign_extras_trigram(tokens, slots_to_fill, self.all_ingredients, common_attributes)
     
+        # Scalamy common
         for s in slots_to_fill:
             if s["dough"]["big_size"] is None and common_attributes["dough"]["big_size"] is not None:
                 s["dough"]["big_size"] = common_attributes["dough"]["big_size"]
@@ -325,6 +442,7 @@ class PizzaParser:
                 s["dough"]["on_thick_pastry"] = common_attributes["dough"]["on_thick_pastry"]
             s["extras"].extend(common_attributes["extras"])
     
+        # Wyznaczamy braki w slots_to_fill
         for slot in slots_to_fill:
             slot["missing_info"] = []
             if slot["pizza"] is None:
@@ -333,70 +451,73 @@ class PizzaParser:
                 slot["missing_info"].append("size")
             if slot["dough"]["on_thick_pastry"] is None:
                 slot["missing_info"].append("thickness")
-
+            # if bezgluten, itp. – zależnie od logiki
+    
+        # Jeśli stworzono *nowe* sloty, zwracamy existing + new
+        # Jeśli new_slots było puste, to zaktualizowaliśmy existing_slots w miejscu
         if new_slots:
             return existing_slots + new_slots
         else:
             return existing_slots
 
-
-@router.post("/analyze-order")
-def analyze_order(data: AnalyzeOrderRequest, db: Session = Depends(get_db)):
-    order = db.query(Order).filter(Order.id == data.order_id).first()
-    if not order:
-        return {"success": False, "message": f"Zamówienie {data.order_id} nie istnieje."}
-
-    parser = PizzaParser(db)
-    parsed_items = parser.parse_order(data.transcription)
-
-    if not parsed_items:
-        return {"success": False, "message": "Nie wykryto żadnych elementów zamówienia."}
-
-    responses = []
-    for slot in parsed_items:
-        pizza_obj = None
-        if slot["pizza"]:
-            pizza_obj = db.query(Pizza).filter(Pizza.name.ilike(slot["pizza"])).first()
-
-        # Budujemy zapytanie ciasta
-        query = db.query(Dough)
-        if slot["dough"]["big_size"] is not None:
-            query = query.filter(Dough.big_size == slot["dough"]["big_size"])
-        if slot["dough"]["on_thick_pastry"] is not None:
-            query = query.filter(Dough.on_thick_pastry == slot["dough"]["on_thick_pastry"])
-        dough_obj = query.first()
-
-        if pizza_obj and dough_obj:
-            new_item = OrderPizzas(
-                order_id=order.id,
-                pizza_id=pizza_obj.id,
-                dough_id=dough_obj.id,
-                quantity=slot["pizza_count"]
-                    )
-            db.add(new_item)
-            db.commit()
-            dough_desc = []
-            if slot["dough"]["big_size"] is None:
-                dough_desc.append("NIE PODANO ROZMIARU (domyślne)")
-            else:
-                dough_desc.append("duża" if slot["dough"]["big_size"] else "mała/średnia")
-
-            if slot["dough"]["on_thick_pastry"] is None:
-                dough_desc.append("NIE PODANO GRUBOŚCI (domyślne)")
-            else:
-                dough_desc.append("grube" if slot["dough"]["on_thick_pastry"] else "cienkie")
-
-            missing = f"(Braki: {slot['missing_info']})" if slot["missing_info"] else ""
-            resp = (
-                f"{slot['pizza_count']}x {pizza_obj.name}, ciasto: {', '.join(dough_desc)} {missing} | "
-                f"Extras: {slot['extras']}"
-            )
-            responses.append(resp)
-        else:
-            responses.append(f"Brak pizzy={pizza_obj} lub ciasta={dough_obj} => {slot}")
-
-    return {
-        "success": True,
-        "parsed_items": parsed_items,
-        "info": responses
-    }
+#
+# @router.post("/analyze-order")
+# def analyze_order(data: AnalyzeOrderRequest, db: Session = Depends(get_db)):
+#     order = db.query(Order).filter(Order.id == data.order_id).first()
+#     if not order:
+#         return {"success": False, "message": f"Zamówienie {data.order_id} nie istnieje."}
+#
+#     parser = PizzaParser(db)
+#     parsed_items = parser.parse_order(data.transcription)
+#
+#     if not parsed_items:
+#         return {"success": False, "message": "Nie wykryto żadnych elementów zamówienia."}
+#
+#     responses = []
+#     for slot in parsed_items:
+#         pizza_obj = None
+#         if slot["pizza"]:
+#             pizza_obj = db.query(Pizza).filter(Pizza.name.ilike(slot["pizza"])).first()
+#
+#         # Budujemy zapytanie ciasta
+#         query = db.query(Dough)
+#         if slot["dough"]["big_size"] is not None:
+#             query = query.filter(Dough.big_size == slot["dough"]["big_size"])
+#         if slot["dough"]["on_thick_pastry"] is not None:
+#             query = query.filter(Dough.on_thick_pastry == slot["dough"]["on_thick_pastry"])
+#         dough_obj = query.first()
+#
+#         if pizza_obj and dough_obj:
+#             new_item = OrderPizzas(
+#                 order_id=order.id,
+#                 pizza_id=pizza_obj.id,
+#                 dough_id=dough_obj.id,
+#                 quantity=slot["pizza_count"]
+#                     )
+#             db.add(new_item)
+#             db.commit()
+#             dough_desc = []
+#             if slot["dough"]["big_size"] is None:
+#                 dough_desc.append("NIE PODANO ROZMIARU (domyślne)")
+#             else:
+#                 dough_desc.append("duża" if slot["dough"]["big_size"] else "mała/średnia")
+#
+#             if slot["dough"]["on_thick_pastry"] is None:
+#                 dough_desc.append("NIE PODANO GRUBOŚCI (domyślne)")
+#             else:
+#                 dough_desc.append("grube" if slot["dough"]["on_thick_pastry"] else "cienkie")
+#
+#             missing = f"(Braki: {slot['missing_info']})" if slot["missing_info"] else ""
+#             resp = (
+#                 f"{slot['pizza_count']}x {pizza_obj.name}, ciasto: {', '.join(dough_desc)} {missing} | "
+#                 f"Extras: {slot['extras']}"
+#             )
+#             responses.append(resp)
+#         else:
+#             responses.append(f"Brak pizzy={pizza_obj} lub ciasta={dough_obj} => {slot}")
+#
+#     return {
+#         "success": True,
+#         "parsed_items": parsed_items,
+#         "info": responses
+#     }
