@@ -12,25 +12,28 @@ pizza_ingredients = Table(
     Column("ingredient_id", Integer, ForeignKey("ingredients.id", ondelete="CASCADE"), primary_key=True)
 )
 
-# pizza_doughs = Table(
-#     "pizza_doughs",
-#     Base.metadata,
-#     Column("pizza_id", Integer, ForeignKey("pizzas.id", ondelete="CASCADE"), primary_key=True),
-#     Column("dough_id", Integer, ForeignKey("doughs.id", ondelete="CASCADE"), primary_key=True)
-# )
+class AdditionalIngredient(Base):
+    __tablename__ = "additional_ingredients"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    order_pizza_id = Column(Integer, ForeignKey("order_pizzas.id", ondelete="CASCADE"))
+    ingredient_id = Column(Integer, ForeignKey("ingredients.id", ondelete="CASCADE"))
+    quantity = Column(Integer, nullable=False, default=1)
+
+    # Relacje
+    order_pizza = relationship("OrderPizzas", back_populates="additional_ingredients_pivot")
+    ingredient = relationship("Ingredient", back_populates="additional_ingredients_pivot")
 
 
-
-order_pizzas = Table(
-    "order_pizzas",
-    Base.metadata,
-    Column("order_id", Integer, ForeignKey("orders.id", ondelete="CASCADE"), primary_key=True),
-    Column("pizza_id", Integer, ForeignKey("pizzas.id", ondelete="CASCADE"), primary_key=True),
-    Column("dough_id", Integer, ForeignKey("doughs.id", ondelete="CASCADE"), primary_key=True),
-    Column("quantity", Integer, nullable=False, default=1),
-    Column("is_partial", Boolean, nullable=False, default=True)
-)
-
+class OrderPizzas(Base):
+    __tablename__ = "order_pizzas"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    order_id = Column(Integer, ForeignKey("orders.id", ondelete="CASCADE"))
+    pizza_id = Column(Integer, ForeignKey("pizzas.id", ondelete="CASCADE"), nullable=True)
+    dough_id = Column(Integer, ForeignKey("doughs.id", ondelete="CASCADE"), nullable=True)
+    quantity = Column(Integer, nullable=False, default=1)
+    is_partial = Column(Boolean, nullable=False, default=True)
+    additional_ingredients_pivot = relationship("AdditionalIngredient", back_populates="order_pizza")
 
 class Pizza(Base):
     __tablename__ = "pizzas"
@@ -38,7 +41,7 @@ class Pizza(Base):
     name = Column(String, index=True, nullable=False)
     in_menu = Column(Boolean, default=True)
     ingredients = relationship("Ingredient", secondary=pizza_ingredients, back_populates="pizzas")
-    orders = relationship("Order", secondary=order_pizzas, back_populates="pizzas")
+    orders = relationship("Order", secondary='order_pizzas', back_populates="pizzas")
 
 class Ingredient(Base):
     __tablename__ = "ingredients"
@@ -47,6 +50,8 @@ class Ingredient(Base):
     category = Column(String, nullable=False)
     price = Column(Float, nullable=False)
     pizzas = relationship("Pizza", secondary=pizza_ingredients, back_populates="ingredients")
+    additional_ingredients_pivot = relationship("AdditionalIngredient", back_populates="ingredient")
+
 
 class Dough(Base):
     __tablename__ = "doughs"
@@ -73,7 +78,7 @@ class Order(Base):
     total_price = Column(Float, nullable=False, default=0)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     client = relationship("Client", back_populates="orders")
-    pizzas = relationship("Pizza", secondary=order_pizzas ,back_populates="orders")
+    pizzas = relationship("Pizza", secondary='order_pizzas' ,back_populates="orders")
 
 class Street(Base):
     __tablename__ = "streets"

@@ -51,6 +51,19 @@ class ClientSchema(BaseModel):
         
         model_config = ConfigDict(from_attributes=True)
 
+class OrderItemSummary(BaseModel):
+    pizza_name: str
+    dough_desc: str
+    price_each: float
+    quantity: int
+    cost: float
+    ingredients: List[str]  # <-- NOWE POLE
+
+class OrderSummaryResponse(BaseModel):
+    order_id: int
+    items: List[OrderItemSummary]
+    total_cost: float
+
 # class AddressSchema(BaseModel):
 # 	id: int
 # 	street: 'StreetSchema'

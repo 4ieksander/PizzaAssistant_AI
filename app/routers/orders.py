@@ -1,9 +1,19 @@
 from fastapi import APIRouter, Depends
 from app.database import get_db
 from sqlalchemy.orm import Session
-from app.models import Client, Order
+from app.models import Client, Order, OrderPizzas, Pizza, Dough, Ingredient
 from app.schemas import InitOrderRequest, OrderSchema
 from app.utils.logger import get_logger
+from app.schemas import OrderItemSummary, OrderSummaryResponse
+
+# path/filename: routers/orders.py
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from typing import List
+
+
+
+router = APIRouter()
 
 log = get_logger(__name__)
 
@@ -35,27 +45,72 @@ def call_and_initiate_order(request: InitOrderRequest, db: Session = Depends(get
 		db.commit()
 		db.refresh(order)
 		return OrderSchema.model_validate(order)
- 
-# @router.get("/{order_id}")
-# def get_order(order_id: int, db: Session = Depends(get_db)):
-#     order_item = db.query(Order).filter(Order.id == order_id).first()
-#     if order_item is None:
-#         raise HTTPException(status_code=404, detail="Order not found")
-#     return order_item
-#
-# @router.post("/")
-# def create_order(order: Order):
-#     db: Session = SessionLocal()
-#     db.add(order)
-#     db.commit()
-#     db.refresh(order)
-#     return order
-#
-# @router.put("/{order_id}")
-# def update_order(order_id: int, order: Order):
-#     db: Session = SessionLocal()
-#     db.query(Order).filter(Order.id == order_id).update(order.dict())
-#     db.commit()
-#     return {"message": "Order updated successfully"}
 
 
+
+@router.get("/summary/{order_id}", response_model=OrderSummaryResponse)
+def get_order_summary(order_id: int, db: Session = Depends(get_db)):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    total_cost = 0.0
+    items_summary: List[OrderItemSummary] = []
+
+    order_pizzas_rows = db.query(OrderPizzas).filter(OrderPizzas.order_id == order_id).all()
+
+    for row in order_pizzas_rows:
+        if not row.pizza_id or not row.dough_id:
+            continue
+
+        pizza_obj = db.query(Pizza).filter(Pizza.id == row.pizza_id).first()
+        dough_obj = db.query(Dough).filter(Dough.id == row.dough_id).first()
+        if not pizza_obj or not dough_obj:
+            continue
+
+        # Podstawa: bazowe składniki pizzy
+        base_ing_price = sum(ing.price for ing in pizza_obj.ingredients)
+        base_ing_names = [f"{ing.name} x1" for ing in pizza_obj.ingredients]
+
+        # Dodatkowe składniki z pivot
+        extras_price = 0.0
+        extra_names = []
+        for pivot in row.additional_ingredients_pivot:
+            ing_qty = pivot.quantity
+            ing = pivot.ingredient
+            cost_for_this = ing.price * ing_qty
+            extras_price += cost_for_this
+            extra_names.append(f"{ing.name} x{ing_qty}")
+
+        # Cena ciasta
+        dough_price = dough_obj.price
+        # Cena jednej sztuki
+        price_each = base_ing_price + extras_price + dough_price
+        # Koszt * quantity
+        cost = price_each * row.quantity
+        total_cost += cost
+
+        # Opis ciasta
+        dough_desc = []
+        dough_desc.append("duża" if dough_obj.big_size else "mała")
+        dough_desc.append("na grubym cieście" if dough_obj.on_thick_pastry else "na cienkim cieście")
+        dough_label = " ".join(dough_desc)
+
+        # Połącz nazwy
+        all_ingredient_names = base_ing_names + extra_names
+
+        items_summary.append(OrderItemSummary(
+            pizza_name=pizza_obj.name,
+            dough_desc=dough_label,
+            price_each=price_each,
+            quantity=row.quantity,
+            cost=cost,
+            ingredients=all_ingredient_names
+        ))
+
+    summary = OrderSummaryResponse(
+        order_id=order_id,
+        items=items_summary,
+        total_cost=total_cost
+    )
+    return summary

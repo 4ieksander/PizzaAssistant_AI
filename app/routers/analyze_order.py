@@ -4,7 +4,6 @@ Rozbudowana wersja algorytmu, podzielona na mniejsze funkcje dla większej czyte
 Wykrywa kilka osobnych pizz różniących się atrybutami ciasta, dopasowuje nazwy pizz
 (fuzzy match), rozróżnia liczbę sztuk, wykrywa sosy, dodatki i braki danych.
 """
-
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Tuple
@@ -14,7 +13,7 @@ from fuzzywuzzy import fuzz
 
 from app.utils.logger import get_logger
 from app.database import get_db
-from app.models import Order, Pizza, Dough, order_pizzas, Ingredient
+from app.models import Order, OrderPizzas, Pizza, Dough, Ingredient
 
 
 log = get_logger(__name__)
@@ -119,6 +118,41 @@ def fuzzy_find_ingredient(txt: str, ingredients: List[str]) -> Tuple[str, int]:
     return (best_ing, best_score)
 
 
+def _detect_slots(tokens, slots: List[dict]) -> bool:
+    """
+    Wyszukuje w tokenach fragmenty 'dwa/trzy pizze' lub 'pizza'
+    i dodaje odpowiednią liczbę slotów. Zwraca True, jeśli rozbiliśmy
+    liczbę slotów, w przeciwnym razie False (dla logiki 'pierwsze spotkanie z pizza').
+    """
+    total_slots_created = False
+    i = 0
+    while i < len(tokens):
+        t = tokens[i]
+        lemma = t.lemma_
+
+        # Sprawdź, czy to “dwie/dwa/trzy” i dalej “pizza/pizze”
+        if lemma in POLISH_NUMBERS and (i + 1) < len(tokens):
+            next_lemma = tokens[i + 1].lemma_
+            if "pizza" in next_lemma:
+                count_val = POLISH_NUMBERS[lemma]
+                for _ in range(count_val):
+                    slots.append(_create_slot())
+                total_slots_created = True
+                i += 2
+                continue
+
+        # Sprawdź, czy to “pizza” w liczbie pojedynczej (bez 'dwie/trzy')
+        if lemma == "pizza" and not total_slots_created:
+            slots.append(_create_slot())
+            total_slots_created = True
+            i += 1
+            continue
+
+        i += 1
+
+    return total_slots_created
+
+
 def _create_slot() -> dict:
     """
     Tworzy nowy slot opisujący pojedynczą sztukę pizzy.
@@ -162,7 +196,7 @@ def _assign_attributes(tokens, slots: List[dict], all_pizzas: List[str],
 
         # Rozmiar
         mapped_size = _map_synonym_with_dict(lemma, SIZE_SYNONYMS)
-        if mapped_size in ("duża", "mała", "średnia"):
+        if mapped_size in ("duża", "mała"):
             if slots:
                 slots[-1]["dough"]["big_size"] = (mapped_size == "duża")
             else:
@@ -227,9 +261,6 @@ class PizzaParser:
         self.nlp = nlp
         self.all_pizzas = [p.name.lower() for p in db.query(Pizza).all()]
         self.all_ingredients = [ing.name.lower() for ing in db.query(Ingredient).all()]
-        self.sauce_list = [
-            ing.name.lower() for ing in db.query(Ingredient).filter(Ingredient.category == "sauce")
-        ]
 
     def parse_order(self, text: str) -> List[dict]:
         doc = self.nlp(text.lower())
@@ -240,7 +271,6 @@ class PizzaParser:
                 "big_size": None,
                 "on_thick_pastry": None,
             },
-            "sauces": [],
             "extras": []
         }
         slots: List[dict] = []
@@ -266,6 +296,48 @@ class PizzaParser:
                 slot["missing_info"].append("thickness")
 
         return slots
+    
+    def parse_order_in_context(self, text: str, existing_slots: List[dict]) -> List[dict]:
+        """
+        Wersja parsera, która:
+        1) Próbuje normalnie wykryć nowe sloty,
+        2) Jeśli brak nowych slotów, próbuje dopisać atrybuty do *ostatniego* (lub wskazanego) istniejącego slotu.
+        """
+        doc = self.nlp(text.lower())
+        tokens = list(doc)
+    
+        new_slots: List[dict] = []
+        _detect_slots(tokens, new_slots)
+    
+        slots_to_fill = new_slots if new_slots else existing_slots
+    
+        common_attributes = {
+            "dough": {"big_size": None, "on_thick_pastry": None},
+            "extras": []
+        }
+        _assign_attributes(tokens, slots_to_fill, self.all_pizzas, common_attributes)
+        _assign_extras(tokens, slots_to_fill, self.all_ingredients, common_attributes)
+    
+        for s in slots_to_fill:
+            if s["dough"]["big_size"] is None and common_attributes["dough"]["big_size"] is not None:
+                s["dough"]["big_size"] = common_attributes["dough"]["big_size"]
+            if s["dough"]["on_thick_pastry"] is None and common_attributes["dough"]["on_thick_pastry"] is not None:
+                s["dough"]["on_thick_pastry"] = common_attributes["dough"]["on_thick_pastry"]
+            s["extras"].extend(common_attributes["extras"])
+    
+        for slot in slots_to_fill:
+            slot["missing_info"] = []
+            if slot["pizza"] is None:
+                slot["missing_info"].append("pizza_name")
+            if slot["dough"]["big_size"] is None:
+                slot["missing_info"].append("size")
+            if slot["dough"]["on_thick_pastry"] is None:
+                slot["missing_info"].append("thickness")
+
+        if new_slots:
+            return existing_slots + new_slots
+        else:
+            return existing_slots
 
 
 @router.post("/analyze-order")
@@ -295,16 +367,14 @@ def analyze_order(data: AnalyzeOrderRequest, db: Session = Depends(get_db)):
         dough_obj = query.first()
 
         if pizza_obj and dough_obj:
-            db.execute(
-                order_pizzas.insert().values(
-                    order_id=order.id,
-                    pizza_id=pizza_obj.id,
-                    dough_id=dough_obj.id,
-                    quantity=slot["pizza_count"]
-                )
-            )
+            new_item = OrderPizzas(
+                order_id=order.id,
+                pizza_id=pizza_obj.id,
+                dough_id=dough_obj.id,
+                quantity=slot["pizza_count"]
+                    )
+            db.add(new_item)
             db.commit()
-
             dough_desc = []
             if slot["dough"]["big_size"] is None:
                 dough_desc.append("NIE PODANO ROZMIARU (domyślne)")

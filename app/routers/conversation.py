@@ -1,80 +1,119 @@
 # path/filename: routers/manage_conversation.py
 """
 Obsługa konwersacji i stanu zamówienia.
-Zarządza sekwencją dialogu, używa parsera (PizzaParser) do interpretacji wypowiedzi.
+Teraz: od razu zapisujemy itemy w bazie (order_pizzas), z is_partial=True,
+a po uzupełnieniu braków aktualizujemy i ewentualnie zmieniamy is_partial=False.
 """
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import Optional, Dict, List
+from typing import Dict, List, Optional
 import uuid
 
 from ..database import get_db
 from sqlalchemy.orm import Session
 
-from .analyze_order import PizzaParser, AnalyzeOrderRequest
-from ..models import Order, order_pizzas
+from .analyze_order import PizzaParser
+from ..models import Ingredient, Order, Dough, Pizza, OrderPizzas, AdditionalIngredient
+
 
 router = APIRouter()
 
 CONVERSATION_STATES: Dict[str, dict] = {}
 
-
 class StartConversationRequest(BaseModel):
     order_id: int
     initial_text: str
-
 
 class ContinueConversationRequest(BaseModel):
     conversation_id: str
     user_text: str
 
-
-def _split_completed_incomplete(parsed_items: List[dict]) -> (List[dict], List[dict]):
+def _fill_db_item(session: Session, order_id: int, slot: dict) -> int:
     """
-    Dzieli listę itemów na kompletne (bez braków) i niekompletne (wymagają więcej danych).
+    Tworzy NOWY wiersz w order_pizzas wg slotu (jeśli parametry znane)
+    i zwraca ID tego wiersza. is_partial = True, o ile braki > 0.
     """
-    complete = []
-    incomplete = []
-    for item in parsed_items:
-        if item["missing_info"]:
-            incomplete.append(item)
-        else:
-            complete.append(item)
-    return complete, incomplete
+    pizza_id = None
+    if slot["pizza"]:
+        pizza_obj = session.query(Pizza).filter(Pizza.name.ilike(slot["pizza"])).first()
+        if pizza_obj:
+            pizza_id = pizza_obj.id
+
+    dough_id = None
+    if slot["dough"]["big_size"] is not None and slot["dough"]["on_thick_pastry"] is not None:
+        # w prostszej wersji – bo i tak może brakować gluten.
+        # (albo jeśli parse dopuszcza "without_gluten", też można filtrować)
+        query = session.query(Dough)
+        query = query.filter(Dough.big_size == slot["dough"]["big_size"])
+        query = query.filter(Dough.on_thick_pastry == slot["dough"]["on_thick_pastry"])
+        dough_obj = query.first()
+        if dough_obj:
+            dough_id = dough_obj.id
+
+    is_partial = (len(slot["missing_info"]) > 0)
+
+    new_item = OrderPizzas(
+        order_id=order_id,
+        pizza_id=pizza_id if pizza_id is not None else None,
+        dough_id=dough_id if dough_id is not None else None,
+        quantity=slot.get("pizza_count", 1),
+        is_partial=is_partial
+    )
+    session.add(new_item)
+    session.commit()
+    session.refresh(new_item)  # żeby mieć new_item.id
+    
+    for (ing_name, ing_qty) in slot["extras"]:
+        ing_obj = session.query(Ingredient).filter(Ingredient.name.ilike(ing_name)).first()
+        if ing_obj and ing_obj not in new_item.additional_ingredients_pivot:
+            new_additional_ingredient = AdditionalIngredient(order_pizza_id=new_item.id,
+                                                                               ingredient_id=ing_obj.id,
+                                                                               quantity=ing_qty)
+            session.add(new_additional_ingredient)
+    session.commit()
+    
+    return new_item.id
 
 
-def _merge_item_data(pending_item: dict, fill_source: dict):
+def _update_db_item(session: Session, db_id: int, slot: dict):
     """
-    Uzupełnia brakujące parametry w pending_item danymi z fill_source (jeśli zostały tam wykryte).
-    Przykład: brakujące 'size' => pobieramy fill_source["dough"]["big_size"], jeśli nie jest None.
+    Aktualizuje ISTNIEJĄCY wiersz w order_pizzas,
+    wypełniając brakujące parametry i ustawia is_partial = False jeśli slot kompletny.
     """
-    # Rozmiar
-    if "size" in pending_item["missing_info"]:
-        if fill_source["dough"]["big_size"] is not None:
-            pending_item["dough"]["big_size"] = fill_source["dough"]["big_size"]
-            pending_item["missing_info"].remove("size")
+    db_item = session.query(OrderPizzas).filter(OrderPizzas.id == db_id).first()
+    if not db_item:
+        return
 
-    # Grubość
-    if "thickness" in pending_item["missing_info"]:
-        if fill_source["dough"]["on_thick_pastry"] is not None:
-            pending_item["dough"]["on_thick_pastry"] = fill_source["dough"]["on_thick_pastry"]
-            pending_item["missing_info"].remove("thickness")
+    # Ustawiamy pizza_id, jeśli slot["pizza"] rozpoznano
+    if slot["pizza"]:
+        pizza_obj = session.query(Pizza).filter(Pizza.name.ilike(slot["pizza"])).first()
+        if pizza_obj:
+            db_item.pizza_id = pizza_obj.id
 
-    # Extras i sauces
-    pending_item["extras"].extend(fill_source["extras"])
+    # Ustawiamy dough_id, jeśli slot ma wypełnione dough
+    if slot["dough"]["big_size"] is not None and slot["dough"]["on_thick_pastry"] is not None:
+        query = session.query(Dough)
+        query = query.filter(Dough.big_size == slot["dough"]["big_size"])
+        query = query.filter(Dough.on_thick_pastry == slot["dough"]["on_thick_pastry"])
+        dough_obj = query.first()
+        if dough_obj:
+            db_item.dough_id = dough_obj.id
 
+    # Ilość
+    if "pizza_count" in slot:
+        db_item.quantity = slot["pizza_count"]
+    
+    for (ing_name, ing_qty) in slot["extras"]:
+        ing_obj = session.query(Ingredient).filter(Ingredient.name.ilike(ing_name)).first()
+        if ing_obj and ing_obj not in db_item.additional_ingredients_pivot:
+            new_additional_ingredient = AdditionalIngredient(order_pizza_id=db_id,
+                                                                               ingredient_id=ing_obj.id,
+                                                                               quantity=ing_qty)
+            session.add(new_additional_ingredient)
+    db_item.is_partial = bool(slot["missing_info"])
 
-def _add_extra_items(new_items: List[dict], pending: List[dict], completed: List[dict]):
-    """
-    Jeśli w nowo zinterpretowanym tekście są pozycje (np. user dodał kolejną pizzę),
-    dodajemy je do pending lub completed w zależności od braków.
-    """
-    for ex in new_items:
-        if ex["missing_info"]:
-            pending.append(ex)
-        else:
-            completed.append(ex)
+    session.commit()
 
 
 @router.post("/start")
@@ -84,43 +123,41 @@ def start_conversation(data: StartConversationRequest, db: Session = Depends(get
     if not order:
         return {"success": False, "message": f"Zamówienie {data.order_id} nie istnieje."}
 
-    analyzer = PizzaParser(db)
-    parsed_items = analyzer.parse_order(data.initial_text)
+    parser = PizzaParser(db)
+    parsed_items = parser.parse_order(data.initial_text)
 
-    # Jeśli parser nie zrozumiał niczego
     if not parsed_items:
+        # Tworzymy pusty stan
         CONVERSATION_STATES[conversation_id] = {
             "order_id": data.order_id,
-            "pending_items": [],
-            "completed_items": [],
-            "status": "waiting_for_order_details"
+            "status": "waiting_for_order_details",
+            "slots": []
         }
         return {
             "conversation_id": conversation_id,
             "message": "Nie zrozumiałem zamówienia. Podaj proszę, co chcesz zamówić."
         }
 
-    # Oddzielamy kompletne i niekompletne
-    complete, incomplete = _split_completed_incomplete(parsed_items)
+    # Zapiszmy każdy slot do DB
+    for slot in parsed_items:
+        db_id = _fill_db_item(db, data.order_id, slot)
+        slot["db_id"] = db_id  # zapamiętujemy, który wiersz w bazie to jest
 
-    # Ustawiamy stan
+    # Sprawdźmy, czy któryś slot ma braki
+    incomplete = any(len(s["missing_info"]) > 0 for s in parsed_items)
     status = "awaiting_missing_info" if incomplete else "all_info_provided"
+
+    # Przechowujemy w pamięci minimalny stan (moglibyśmy nie przechowywać wcale,
+    # ale tu np. mamy identyfikację slotów)
     CONVERSATION_STATES[conversation_id] = {
         "order_id": data.order_id,
-        "pending_items": incomplete,
-        "completed_items": complete,
-        "status": status
+        "status": status,
+        "slots": parsed_items
     }
 
-    # Komunikat
-    if incomplete:
-        missing_params = set()
-        for inc in incomplete:
-            missing_params.update(inc["missing_info"])
-        msg = f"Wykryto brakujące informacje: {list(missing_params)}. Proszę uzupełnij."
-    else:
-        msg = "Wszystkie informacje uzupełnione."
-
+    msg = "Wszystkie informacje uzupełnione." if not incomplete else (
+        "Brakuje parametrów. Proszę dopowiedz szczegóły."
+    )
     return {
         "conversation_id": conversation_id,
         "message": msg,
@@ -128,145 +165,53 @@ def start_conversation(data: StartConversationRequest, db: Session = Depends(get
     }
 
 
+# ...
 @router.post("/continue")
 def continue_conversation(data: ContinueConversationRequest, db: Session = Depends(get_db)):
     conv_state = CONVERSATION_STATES.get(data.conversation_id)
     if not conv_state:
         return {"success": False, "message": "Nie znaleziono konwersacji o tym ID."}
 
-    order_id = conv_state["order_id"]
-    status = conv_state["status"]
-    pending = conv_state["pending_items"]
-    completed = conv_state["completed_items"]
+    parser = PizzaParser(db)
+    existing_slots = conv_state["slots"]
+    updated_slots = parser.parse_order_in_context(data.user_text, existing_slots)
 
-    analyzer = PizzaParser(db)
-    new_parsed_items = analyzer.parse_order(data.user_text)
+    old_len = len(existing_slots)
+    new_len = len(updated_slots)
+    if new_len > old_len:
+        new_slots = updated_slots[old_len:]
+        for s in new_slots:
+            # nadaj db_id
+            db_id = _fill_db_item(db, conv_state["order_id"], s)
+            s["db_id"] = db_id
+    else:
+        for s in updated_slots:
+            if "db_id" not in s:
+                db_id = _fill_db_item(db, conv_state["order_id"], s)
+                s["db_id"] = db_id
 
-    if status == "awaiting_missing_info":
-        # Spróbujmy uzupełnić braki w pending (heurystyka: bierzemy dane z new_parsed_items[0])
-        if new_parsed_items:
-            fill_source_items = new_parsed_items[:]  # kopia
-            for idx, p_item in enumerate(pending):
-                if not fill_source_items:
-                    break
-                # Pierwszy element z fill_source_items
-                fill_source = fill_source_items[0]
-                _merge_item_data(p_item, fill_source)
+    conv_state["slots"] = updated_slots
 
-                # Jeśli wypełniliśmy wszystkie braki, przenieś do completed
-                if not p_item["missing_info"]:
-                    completed.append(p_item)
-                    pending.pop(idx)
-                    fill_source_items.pop(0)  # zużyliśmy fill_source
-                    break
+    # Każdy slot, jeśli nie ma missing_info => zaktualizuj w bazie (is_partial=False)
+    for slot in updated_slots:
+        _update_db_item(db, slot["db_id"], slot)
+    # Ustalamy status:
+    incomplete = any(len(s["missing_info"]) > 0 for s in updated_slots)
+    status = "awaiting_missing_info" if incomplete else "all_info_provided"
+    
 
-            # Sprawdź, czy były kolejne itemy
-            if len(fill_source_items) > 0:
-                _add_extra_items(fill_source_items, pending, completed)
-
-        # Oceniamy status
-        if not pending:
-            conv_state["status"] = "all_info_provided"
-            msg = "Wszystkie parametry zostały uzupełnione."
-        else:
-            conv_state["status"] = "awaiting_missing_info"
-            missing_params = set()
-            for inc in pending:
-                missing_params.update(inc["missing_info"])
-            msg = f"Wciąż brakuje: {list(missing_params)}"
-
-    elif status == "all_info_provided":
-        # Być może user domawia nową pizzę
-        if not new_parsed_items:
-            msg = "Nic nie dodano."
-        else:
-            # Sprawdzamy braki i dodajemy
-            _add_extra_items(new_parsed_items, pending, completed)
-            if pending:
-                conv_state["status"] = "awaiting_missing_info"
-                msg = "Dodano nową pozycję, ale brakuje informacji. Podaj proszę szczegóły."
-            else:
-                msg = "Dodano nową pozycję. Wszystkie informacje kompletne."
-
-    # Aktualizujemy stan
-    CONVERSATION_STATES[data.conversation_id] = conv_state
+    conv_state["slots"] = updated_slots
+    conv_state["status"] = status
+    
+    msg = "OK"
+    if incomplete:
+        msg += " – Wciąż brakuje pewnych informacji."
+    else:
+        msg += " – Wszystkie informacje kompletne."
 
     return {
         "conversation_id": data.conversation_id,
         "status": conv_state["status"],
-        "pending_items": conv_state["pending_items"],
-        "completed_items": conv_state["completed_items"],
+        "slots": updated_slots,
         "message": msg
-    }
-
-
-
-@router.post("/conversation/finish")
-def finish_conversation(conversation_id: str, db: Session = Depends(get_db)):
-    """
-    Zamyka konwersację, przenosząc 'completed_items' do bazy (order_pizzas).
-    (opcjonalnie można to robić w trakcie,
-     ale tu pokazujemy jako osobny krok "zatwierdzenia").
-    """
-    conv_state = CONVERSATION_STATES.get(conversation_id)
-    if not conv_state:
-        return {"success": False, "message": "Nie znaleziono konwersacji o tym ID."}
-
-    if conv_state["status"] == "awaiting_missing_info":
-        return {
-            "success": False,
-            "message": "Nie można zakończyć – są jeszcze brakujące informacje."
-        }
-
-    order_id = conv_state["order_id"]
-    completed_items = conv_state["completed_items"]
-
-    # Zapisujemy do bazy
-    order = db.query(Order).filter(Order.id == order_id).first()
-    if not order:
-        return {"success": False, "message": f"Zamówienie {order_id} nie istnieje."}
-
-    analyzer = PizzaParser(db)
-
-    added_info = []
-    for item in completed_items:
-        # Znajdź Pizza
-        pizza_obj = None
-        if item["pizza"]:
-            pizza_obj = next(
-                (p for p in analyzer.all_pizzas if p.name.lower() == item["pizza"]),
-                None
-            )
-
-        # Znajdź ciasto
-        query = db.query(Dough)
-        if item["dough"]["big_size"] is not None:
-            query = query.filter(Dough.big_size == item["dough"]["big_size"])
-        if item["dough"]["on_thick_pastry"] is not None:
-            query = query.filter(Dough.on_thick_pastry == item["dough"]["on_thick_pastry"])
-        dough_obj = query.first()
-
-        if pizza_obj and dough_obj:
-            db.execute(
-                order_pizzas.insert().values(
-                    order_id=order.id,
-                    pizza_id=pizza_obj.id,
-                    dough_id=dough_obj.id,
-                    quantity=item["pizza_count"]
-                )
-            )
-            db.commit()
-            added_info.append(
-                f"{item['pizza_count']}x {pizza_obj.name} (ciasto: size={item['dough']['big_size']}, thick={item['dough']['on_thick_pastry']})"
-            )
-        else:
-            added_info.append(f"Nie dodano: {item}")
-
-    # Oczyszczamy konwersację (opcjonalnie)
-    del CONVERSATION_STATES[conversation_id]
-
-    return {
-        "success": True,
-        "message": "Zamówienie zaktualizowane.",
-        "added_items": added_info
     }
