@@ -39,8 +39,7 @@ POLISH_MULTIPLIERS = {
 	}
 SIZE_SYNONYMS = {
 	"duża":    ["duży", "dużą", "wielka", "wielką", "family"],
-	"średnia": ["średni", "średnią", "normalna"],
-	"mała":    ["mały", "małą"]
+	"mała":    ["mały", "małą", "średnia"]
 	}
 THICKNESS_SYNONYMS = {
 	"gruba":  ["gruby", "grube", "grubym"],
@@ -53,16 +52,11 @@ GLUTEN_SYNONYMS = {
 REFERENCE_WORDS_FOR_NEXT = {
 	"jedna":   1,
 	"druga":   2,
-	"trzecia": 3
-	# itd.
-	}
+	"trzecia": 3,
+	"czwarta": 4}
 
 
 def fuzzy_match_pizza(candidate: str, pizza_names: List[str]) -> Optional[str]:
-	"""
-	Próbujemy odwzorować 'candidate' na jedną z 'pizza_names'
-	z większym naciskiem na wysokie dopasowanie.
-	"""
 	best_score = 0
 	best_name = None
 	for p_name in pizza_names:
