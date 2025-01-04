@@ -52,25 +52,28 @@ REFERENCE_WORDS_FOR_NEXT = {
     "kolejna": 1,
 }
 
-def _map_synonym_with_dict(word: str, synonyms_dict: dict) -> str:
+def _map_synonym_with_dict(word: str, synonyms_dict: dict, return_none=False):
     """
     Funkcja pomocnicza do mapowania słowa na klucz, jeśli występuje w słowniku synonimów.
     """
     for key, synonyms in synonyms_dict.items():
         if word in synonyms:
             return key
-    return word
+    if return_none:
+        return None
+    else:
+        return word
 
 
-def detect_number_if_any(token) -> int:
+def detect_number_if_any(token, return_none=False) -> int:
     """
     Zwraca int, jeśli to liczba lub polskie słowo-liczba, w przeciwnym razie 1.
     """
-    val = 1
-    log.debug("like num: %s", token.like_num)
-    log.debug("tokken lema: %s", token.lemma_)
-    log.debug("token text: %s", token.text)
-    
+    if return_none:
+        val = None
+    else:
+        val = 1
+        
     if token.like_num:
         try:
             val = int(token.text)
@@ -99,7 +102,7 @@ def fuzzy_match_pizza(candidate: str, pizza_names: List[str]) -> Optional[str]:
         if score > best_score:
             best_score = score
             best_name = p_name
-    if best_score >= 60:
+    if best_score >= 66:
         return best_name
     return None
 
@@ -118,45 +121,68 @@ def fuzzy_find_ingredient(txt: str, ingredients: List[str]) -> Tuple[str, int]:
     return (best_ing, best_score)
 
 
-def _detect_slots(tokens, slots: List[dict]) -> bool:
+def _detect_pizza_count(tokens, slots: List[dict], all_pizzas: List[str]) -> bool:
     """
     Wyszukuje w tokenach fragmenty 'dwa/trzy pizze' lub 'pizza'
     i dodaje odpowiednią liczbę slotów. Zwraca True, jeśli rozbiliśmy
     liczbę slotów, w przeciwnym razie False (dla logiki 'pierwsze spotkanie z pizza').
     """
-    total_slots_created = False
+    slots_created = False
     i = 0
     while i < len(tokens):
-        t = tokens[i]
-        lemma = t.lemma_
+        token = tokens[i]
+        lemma = token.lemma_
 
-        if lemma in POLISH_NUMBERS and (i + 1) < len(tokens):
+        if detect_number_if_any(token, return_none=True) and (i + 1) < len(tokens):
             next_lemma = tokens[i + 1].lemma_
-            if "pizza" in next_lemma:
-                count_val = POLISH_NUMBERS[lemma]
-                for _ in range(count_val):
+            pizza_name = fuzzy_match_pizza(token[i+1].text, all_pizzas)
+            if "pizza" in next_lemma or pizza_name:
+                count_val = detect_number_if_any(token[i].text)
+                if pizza_name:
                     slots.append(_create_slot())
-                total_slots_created = True
+                    slots[-1]["pizza_count"] = count_val
+                    slots[-1]["pizza"] =  pizza_name
+                elif (i +2) < len(tokens) and fuzzy_match_pizza(token[i+2].text, all_pizzas):
+                    slots.append(_create_slot())
+                    slots[-1]["pizza_count"] = count_val
+                    slots[-1]["pizza"] =  fuzzy_match_pizza(token[i+2].text, all_pizzas)
+                else:
+                    for _ in range(count_val):
+                        slots.append(_create_slot())
+                slots_created = True
                 i += 2
-                continue
-
-        # Sprawdź, czy to “pizza” w liczbie pojedynczej (bez 'dwie/trzy')
-        if lemma == "pizza" and not total_slots_created:
-            slots.append(_create_slot())
-            total_slots_created = True
-            i += 1
+            elif  _map_synonym_with_dict(next_lemma, SIZE_SYNONYMS, return_none=True) and (i + 2) < len(tokens):
+                next_next_lemma = tokens[i + 2].lemma_
+                pizza_name = fuzzy_match_pizza(token[i+2].text, all_pizzas)
+                if "pizza" in next_next_lemma or pizza_name:
+                    count_val = detect_number_if_any(token[i].text)
+                    if pizza_name:
+                        slots.append(_create_slot())
+                        slots[-1]["pizza_count"] = count_val
+                        slots[-1]["pizza"] = pizza_name
+                    elif (i + 3) < len(tokens) and fuzzy_match_pizza(token[i+3].text, all_pizzas):
+                        slots.append(_create_slot())
+                        slots[-1]["pizza_count"] = count_val
+                        slots[-1]["pizza"] = fuzzy_match_pizza(token[i+3].text, all_pizzas)
+                    else:
+                        for _ in range(count_val):
+                            slots.append(_create_slot())
+                    i += 3
+                    slots_created = True
             continue
 
+        if (lemma == "pizza" or fuzzy_match_pizza(token[i].text, all_pizzas)) and not slots_created:
+            slots_created = True
+            i += 1
+            continue
         i += 1
 
-    return total_slots_created
 
 
 def _create_slot() -> dict:
     """
     Tworzy nowy slot opisujący pojedynczą sztukę pizzy.
     """
-    log.info("Tworzę nowy slot z id=%s")
     return {
         "pizza":        None,
         "pizza_count":  1,
@@ -181,18 +207,6 @@ def _assign_attributes(tokens, slots: List[dict], all_pizzas: List[str],
         t = tokens[i]
         txt = t.text.lower()
         lemma = t.lemma_.lower()
-        
-        #liczebnik
-        if lemma in POLISH_NUMBERS or t.like_num:
-            if t.like_num:
-                try:
-                    last_count = int(t.text)
-                except:
-                    last_count = None
-            else:
-                last_count = POLISH_NUMBERS.get(lemma, None)
-            i += 1
-            continue
         
         #rozmiar
         mapped_size = _map_synonym_with_dict(lemma, SIZE_SYNONYMS)
@@ -223,11 +237,6 @@ def _assign_attributes(tokens, slots: List[dict], all_pizzas: List[str],
             
             slot = slots[-1]
             slot["pizza"] = matched_pizza
-            
-            if last_count is not None:
-                slot["pizza_count"] = last_count
-                last_count = None
-            i += 1
             continue
         i += 1
 
@@ -389,10 +398,12 @@ class PizzaParser:
             "extras": []
         }
         slots: List[dict] = []
-
+        
         _assign_attributes(tokens, slots, self.all_pizzas, common_attributes)
         _assign_extras_trigram(tokens, slots, self.all_ingredients, common_attributes)
 
+        _detect_slots(tokens, slots,  self.all_pizzas)
+        
         # 4) Scalamy atrybuty wspólne, jeśli nie zostały one nadpisane
         for s in slots:
             if common_attributes["dough"]["big_size"] is not None and s["dough"]["big_size"] is None:
@@ -411,6 +422,7 @@ class PizzaParser:
                 slot["missing_info"].append("Grubość ciasta")
 
         return slots
+    
     def parse_order_in_context(self, text: str, existing_slots: List[dict]) -> List[dict]:
         """
         Wersja parsera, która:
@@ -422,7 +434,7 @@ class PizzaParser:
     
         # Najpierw standardowe:
         new_slots: List[dict] = []
-        _detect_slots(tokens, new_slots)  # Być może brak 'pizza' => new_slots będzie puste
+        _detect_slots(tokens, new_slots, self.all_pizzas)  # Być może brak 'pizza' => new_slots będzie puste
     
         # Tutaj przypisujemy atrybuty
         # Ale jeśli new_slots jest puste, to 'wymusimy' przypisanie do existing_slots
