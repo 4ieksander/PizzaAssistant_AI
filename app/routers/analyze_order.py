@@ -430,7 +430,26 @@ def check_for_extra_ingredient(tokens, all_ingredients, slots, common_attributes
             best_ing, sc = fuzzy_find_ingredient(tokens[1].text.lower(), all_ingredients)
     if sc > 70 and best_ing:
         add_extra_ingredient(best_ing, qty)
-            
+        
+        
+def merge_and_find_missing(slots: List[dict], common_attributes: dict):
+    for slot in slots:          # scal wspólne z slotami
+        if slot["dough"]["big_size"] is None and common_attributes["dough"]["big_size"] is not None:
+            slot["dough"]["big_size"] = common_attributes["dough"]["big_size"]
+        if slot["dough"]["on_thick_pastry"] is None and common_attributes["dough"][
+            "on_thick_pastry"] is not None:
+            slot["dough"]["on_thick_pastry"] = common_attributes["dough"]["on_thick_pastry"]
+        slot["extras"].extend(common_attributes["extras"])
+    
+    for slot in slots:      # Wyznacz braki
+        slot["missing_info"] = []
+        if slot["pizza"] is None:
+            slot["missing_info"].append("Nazwa pizzy")
+        if slot["dough"]["big_size"] is None:
+            slot["missing_info"].append("Rozmiar")
+        if slot["dough"]["on_thick_pastry"] is None:
+            slot["missing_info"].append("Grubość ciasta")
+
 
 class PizzaParser:
     def __init__(self, db: Session):
@@ -456,25 +475,9 @@ class PizzaParser:
         log.info("Slots: %s", slots)
         _assign_attributes(tokens, slots, self.all_pizzas, common_attributes)
         _assign_extras_trigram(tokens, slots, self.all_ingredients, common_attributes)
-
+    
+        merge_and_find_missing(slots, common_attributes)
         
-        # 4) Scalamy atrybuty wspólne, jeśli nie zostały one nadpisane
-        for s in slots:
-            if common_attributes["dough"]["big_size"] is not None and s["dough"]["big_size"] is None:
-                s["dough"]["big_size"] = common_attributes["dough"]["big_size"]
-            if common_attributes["dough"]["on_thick_pastry"] is not None and s["dough"]["on_thick_pastry"] is None:
-                s["dough"]["on_thick_pastry"] = common_attributes["dough"]["on_thick_pastry"]
-            s["extras"].extend(common_attributes["extras"])
-
-        # 5) Wyznaczamy braki
-        for slot in slots:
-            if slot["pizza"] is None:
-                slot["missing_info"].append("Nazwa pizzy")
-            if slot["dough"]["big_size"] is None:
-                slot["missing_info"].append("Rozmiar")
-            if slot["dough"]["on_thick_pastry"] is None:
-                slot["missing_info"].append("Grubość ciasta")
-
         return slots
     
     def parse_order_in_context(self, text: str, existing_slots: List[dict]) -> List[dict]:
@@ -482,64 +485,30 @@ class PizzaParser:
         tokens = list(doc)
         
         slot_idx_ref = _detect_slot_references(tokens, existing_slots)
-        
+        common_attributes = {"dough": {"big_size": None, "on_thick_pastry": None}, "extras": []}
+
+        if slot_idx_ref is None and existing_slots:
+            for idx, slot in enumerate(existing_slots):
+                if slot['missing_info']:
+                    slot_idx_ref = idx
+                    break
+            
         if slot_idx_ref is not None:
             active_slot = existing_slots[slot_idx_ref]
-            
-            # Tworzymy common_attributes do zapełnienia
-            common_attributes = {"dough": {"big_size": None, "on_thick_pastry": None}, "extras": []}
-            
-            # Wywołujemy mniejsze metody dedykowane JEDNEMU slotowi:
             _assign_attributes(tokens, existing_slots, self.all_pizzas, common_attributes, active_slot)
             _assign_extras_trigram(tokens, existing_slots, self.all_ingredients, common_attributes, active_slot)
-            
-            # scalamy atrybuty do slotu
-            if active_slot["dough"]["big_size"] is None and common_attributes["dough"]["big_size"] is not None:
-                active_slot["dough"]["big_size"] = common_attributes["dough"]["big_size"]
-            if active_slot["dough"]["on_thick_pastry"] is None and common_attributes["dough"][
-                "on_thick_pastry"] is not None:
-                active_slot["dough"]["on_thick_pastry"] = common_attributes["dough"]["on_thick_pastry"]
-            active_slot["extras"].extend(common_attributes["extras"])
-            
-            # Wyznacz braki
-            active_slot["missing_info"] = []
-            if active_slot["pizza"] is None:
-                active_slot["missing_info"].append("pizza_name")
-            if active_slot["dough"]["big_size"] is None:
-                active_slot["missing_info"].append("size")
-            if active_slot["dough"]["on_thick_pastry"] is None:
-                active_slot["missing_info"].append("thickness")
-        else:
-        
+            merge_and_find_missing([active_slot], common_attributes)
+            return existing_slots
+        if slot_idx_ref is None and existing_slots and all(not slot['missing_info'] for slot in existing_slots):
             new_slots: List[dict] = []
             _detect_pizza_count(tokens, new_slots, self.all_pizzas)
             slots_to_fill = new_slots if new_slots else existing_slots
-    
-            common_attributes = {
-                "dough": {"big_size": None, "on_thick_pastry": None},
-                "extras": []
-            }
+            
             _assign_attributes(tokens, slots_to_fill, self.all_pizzas, common_attributes)
             _assign_extras_trigram(tokens, slots_to_fill, self.all_ingredients, common_attributes)
             
-            for s in slots_to_fill:
-                if s["dough"]["big_size"] is None and common_attributes["dough"]["big_size"] is not None:
-                    s["dough"]["big_size"] = common_attributes["dough"]["big_size"]
-                if s["dough"]["on_thick_pastry"] is None and common_attributes["dough"]["on_thick_pastry"] is not None:
-                    s["dough"]["on_thick_pastry"] = common_attributes["dough"]["on_thick_pastry"]
-                s["extras"].extend(common_attributes["extras"])
-        
-            for slot in slots_to_fill:
-                slot["missing_info"] = []
-                if slot["pizza"] is None:
-                    slot["missing_info"].append("pizza_name")
-                if slot["dough"]["big_size"] is None:
-                    slot["missing_info"].append("size")
-                if slot["dough"]["on_thick_pastry"] is None:
-                    slot["missing_info"].append("thickness")
+            merge_and_find_missing(slots_to_fill, common_attributes)
     
-        # Jeśli stworzono *nowe* sloty, zwracamy existing + new
-        # Jeśli new_slots było puste, to zaktualizowaliśmy existing_slots w miejscu
             if new_slots:
                 return existing_slots + new_slots
             else:
