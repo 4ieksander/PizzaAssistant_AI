@@ -13,7 +13,6 @@ import OrderSummaryView from "./OrderSummaryView";
 function AnalyzeOrderDialogue({ isOpen, onClose, phone }) {
 	const [orderData, setOrderData] = useState(null);
 	const [conversationId, setConversationId] = useState(null);
-	const [parsedItems, setParsedItems] = useState([]);
 	const [pendingItems, setPendingItems] = useState([]);
 	const [completedItems, setCompletedItems] = useState([]);
 	const [conversationMessage, setConversationMessage] = useState("");
@@ -74,7 +73,6 @@ function AnalyzeOrderDialogue({ isOpen, onClose, phone }) {
 
 	const updateOrderData = async (response) => {
 		setConversationMessage(response.data.message);
-		setParsedItems(response.data.parsed_items || []);
 		setPendingItems(response.data.parsed_items?.filter((it) => it.missing_info?.length > 0) || []);
 		setCompletedItems(response.data.parsed_items?.filter((it) => !it.missing_info?.length) || []);
 	}
@@ -93,7 +91,6 @@ function AnalyzeOrderDialogue({ isOpen, onClose, phone }) {
 		onClose();
 		setConversationId(null);
 		setOrderData(null);
-		setParsedItems([]);
 		setPendingItems([]);
 		setCompletedItems([]);
 		setConversationMessage("");
@@ -116,15 +113,14 @@ function AnalyzeOrderDialogue({ isOpen, onClose, phone }) {
 						<p><strong>ID konwersacji</strong> {conversationId || "Brak"}</p>
 						<p><strong>Czas rozpoczęcia:</strong> {new Date(orderData.order_start_time).toLocaleString()}</p>
 						<p><strong>Numer telefonu:</strong> {phone}</p>
-						{/* Transkrypcja */}
 						{/* Komunikat z backendu */}
 						<p>{conversationMessage}</p>
 						
 						{/* Wyświetlenie pending i completed */}
-						<h4>Pending Items:</h4>
+						<h4>Niepełne informacje:</h4>
 						{pendingItems.map((item, idx) => (
 							<p key={idx}>
-								Pizza: {item.pizza || "(no name)"} - Missing: {item.missing_info.join(", ")}
+								Pizza: {item.pizza || "(Brak nazwy)"} - Missing: {item.missing_info.join(", ")}
 							</p>
 						))}
 						<h4>Completed Items:</h4>
