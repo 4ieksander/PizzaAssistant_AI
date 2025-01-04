@@ -124,6 +124,7 @@ def _detect_slot_references(tokens, existing_slots):
     chosen_slot_index = None
     i = 0
     while i < len(tokens):
+        log.info("Jestem w petli %s", i)
         if i == 6:
             break;
         t = tokens[i].lemma_.lower()
@@ -162,7 +163,7 @@ def _detect_slot_references(tokens, existing_slots):
                                     if slot["pizza"] == pizza_name:
                                         chosen_slot_index = i
                                         break
-                            i += 1
+        i += 1
     return chosen_slot_index
 
 
@@ -174,8 +175,8 @@ def _detect_pizza_count(tokens, slots: List[dict], all_pizzas: List[str])  -> bo
     """
     slots_created = False
     i = 0
-    log.info("Detecting pizza count")
     while i < len(tokens):
+        log.info("Pętla detect_pizza_count: %s", i)
         token = tokens[i]
         lemma = token.lemma_
 
@@ -183,12 +184,14 @@ def _detect_pizza_count(tokens, slots: List[dict], all_pizzas: List[str])  -> bo
             next_lemma = tokens[i + 1].lemma_
             pizza_name = fuzzy_match_pizza(tokens[i+1].text, all_pizzas)
             if "pizza" in next_lemma or pizza_name:
-                count_val = detect_number_if_any(tokens[i].text)
+                count_val = detect_number_if_any(token.text, return_none=True)
                 if pizza_name:
+                    log.info("Znalazłem pizzę: %s", pizza_name)
                     slots.append(_create_slot())
                     slots[-1]["pizza_count"] = count_val
                     slots[-1]["pizza"] =  pizza_name
                 elif (i +2) < len(tokens) and fuzzy_match_pizza(tokens[i+2].text, all_pizzas):
+                    log.info("Znalazłem pizzę przy 2gim podejsciu: %s", tokens[i+2].text)
                     slots.append(_create_slot())
                     slots[-1]["pizza_count"] = count_val
                     slots[-1]["pizza"] =  fuzzy_match_pizza(tokens[i+2].text, all_pizzas)
@@ -256,6 +259,7 @@ def _assign_attributes(tokens, slots: List[dict], all_pizzas: List[str],
     
         
     while i < len(tokens):
+        log.info("pętla assign_attributes: %s", i)
         txt = tokens[i].text.lower()
         lemma = tokens[i].lemma_.lower()
                 #rozmiar
