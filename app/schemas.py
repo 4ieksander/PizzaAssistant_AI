@@ -1,56 +1,55 @@
-﻿# backend/app/schemas.py
-from datetime import datetime
+﻿from datetime import datetime
 import dataclasses
 from pydantic import BaseModel, ConfigDict
 from typing import List
 
 class IngredientSchema(BaseModel):
-	id: int
-	name: str
-	category: str
-	price: float
-	
-	class Config:
-		from_attributes = True
+        id: int
+        name: str
+        category: str
+        price: float
+        
+        class Config:
+                from_attributes = True
 
 class DoughSchema(BaseModel):
-	id: int
-	big_size: bool
-	on_thick_pastry: bool
-	without_gluten: bool
-	price: float
-	
-	class Config:
-		from_attributes = True
+        id: int
+        big_size: bool
+        on_thick_pastry: bool
+        without_gluten: bool
+        price: float
+        
+        class Config:
+                from_attributes = True
 
 
 class PizzaSchema(BaseModel):
-	id: int
-	name: str
-	in_menu: bool
-	ingredients: List[IngredientSchema] = dataclasses.field(default_factory=list)
-	available_pizza_doughs: List[DoughSchema] = dataclasses.field(default_factory=list)
-	orders: List['OrderSchema'] = dataclasses.field(default_factory=list)
+        id: int
+        name: str
+        in_menu: bool
+        ingredients: List[IngredientSchema] = dataclasses.field(default_factory=list)
+        available_pizza_doughs: List[DoughSchema] = dataclasses.field(default_factory=list)
+        orders: List['OrderSchema'] = dataclasses.field(default_factory=list)
 
-	class Config:
-		from_attributes = True
+        class Config:
+                from_attributes = True
 
 
 class StreetSchema(BaseModel):
-	id: int
-	name: str
-	
-	class Config:
-		from_attributes = True
+        id: int
+        name: str
+        
+        class Config:
+                from_attributes = True
 
 
 class ClientSchema(BaseModel):
-	id: int
-	phone: str
-	street: 'StreetSchema' = None
-	orders: List[int] = dataclasses.field(default_factory=list)
-	
-	model_config = ConfigDict(from_attributes=True)
+        id: int
+        phone: str
+        street: 'StreetSchema' = None
+        orders: List[int] = dataclasses.field(default_factory=list)
+        
+        model_config = ConfigDict(from_attributes=True)
 
 # class AddressSchema(BaseModel):
 # 	id: int
@@ -64,10 +63,10 @@ class ClientSchema(BaseModel):
 
 # Model danych wejściowych
 class InitOrderRequest(BaseModel):
-	phone: str
+        phone: str
 
 class Config:
-	from_attributes = True
+        from_attributes = True
 
 
 class OrderSchema(BaseModel):

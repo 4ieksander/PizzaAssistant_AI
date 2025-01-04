@@ -1,4 +1,4 @@
-from utils.analyze_order import analyze_order
+from app.routers.analyze_order import analyze_order
 
 example_orders_by_chat_gpt = [
 	"Dzień dobry, poproszę jedną dużą Margheritę i średnią Pepperoni. Do tego jeszcze dwie butelki coli, jeśli można.",

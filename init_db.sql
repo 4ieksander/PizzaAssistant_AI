@@ -3,7 +3,7 @@ INSERT INTO ingredients (name, category, price) VALUES
 ('Pomidor', 'vegetable', 1.5),
 ('Mozzarella', 'dairy', 2),
 ('Bazylia', 'vegetable', 1),
-('Pepperoni', 'meat', 2.5),
+('Salami', 'meat', 2.5),
 ('Pieczarki', 'vegetable', 1.5),
 ('Parmezan', 'dairy', 2),
 ('Kurczak', 'meat', 3),
