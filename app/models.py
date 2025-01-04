@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Table, Enum
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Table, Enum, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from .database import Base, engine
@@ -19,11 +19,12 @@ class AdditionalIngredient(Base):
     order_pizza_id = Column(Integer, ForeignKey("order_pizzas.id", ondelete="CASCADE"))
     ingredient_id = Column(Integer, ForeignKey("ingredients.id", ondelete="CASCADE"))
     quantity = Column(Integer, nullable=False, default=1)
+    __table_args__ = (UniqueConstraint('order_pizza_id', 'ingredient_id', name='_order_pizza_ingredient_uc'),)
 
     # Relacje
     order_pizza = relationship("OrderPizzas", back_populates="additional_ingredients_pivot")
     ingredient = relationship("Ingredient", back_populates="additional_ingredients_pivot")
-
+    
 
 class OrderPizzas(Base):
     __tablename__ = "order_pizzas"
@@ -58,8 +59,7 @@ class Dough(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     big_size = Column(Boolean, nullable=True)
     on_thick_pastry = Column(Boolean, nullable=True)
-    without_gluten = Column(Boolean, default=False)
-    price = Column(Float, nullable=False)
+price = Column(Float, nullable=False)
 
 class Client(Base):
     __tablename__ = "clients"
