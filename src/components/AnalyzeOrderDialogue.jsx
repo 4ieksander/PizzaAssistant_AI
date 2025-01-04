@@ -8,6 +8,7 @@ import DialogContentText from "@mui/material/DialogContentText";
 import DialogTitle from "@mui/material/DialogTitle";
 import CircularProgress from "@mui/material/CircularProgress";
 import SpeechRecognition, { useSpeechRecognition } from "react-speech-recognition";
+import OrderSummaryView from "./OrderSummaryView";
 
 function AnalyzeOrderDialogue({ isOpen, onClose, phone }) {
 	const [orderData, setOrderData] = useState(null);
@@ -45,10 +46,7 @@ function AnalyzeOrderDialogue({ isOpen, onClose, phone }) {
 			});
 			console.log("startConversation response:", response.data);
 			setConversationId(response.data.conversation_id);
-			setConversationMessage(response.data.message);
-			setParsedItems(response.data.parsed_items || []);
-			setPendingItems(response.data.parsed_items?.filter((it) => it.missing_info?.length > 0) || []);
-			setCompletedItems(response.data.parsed_items?.filter((it) => !it.missing_info?.length) || []);
+			await updateOrderData(response);
 		} catch (err) {
 			console.error("Error in startConversation:", err);
 		} finally {
@@ -65,10 +63,8 @@ function AnalyzeOrderDialogue({ isOpen, onClose, phone }) {
 				user_text: userText
 			});
 			console.log("continueConversation response:", response.data);
-			// Aktualizujemy stan
-			setConversationMessage(response.data.message);
-			setPendingItems(response.data.pending_items || []);
-			setCompletedItems(response.data.completed_items || []);
+			await updateOrderData(response);
+
 		} catch (err) {
 			console.error("Error in continueConversation:", err);
 		} finally {
@@ -76,14 +72,33 @@ function AnalyzeOrderDialogue({ isOpen, onClose, phone }) {
 		}
 	};
 
+	const updateOrderData = async (response) => {
+		setConversationMessage(response.data.message);
+		setParsedItems(response.data.parsed_items || []);
+		setPendingItems(response.data.parsed_items?.filter((it) => it.missing_info?.length > 0) || []);
+		setCompletedItems(response.data.parsed_items?.filter((it) => !it.missing_info?.length) || []);
+	}
+	
 	const handleSendTranscript = () => {
 		if (!conversationId){
 			startConversation(orderData.id, transcript);
 		}
-		handleContinueConversation(transcript);
-		
+		else{
+			handleContinueConversation(transcript);
+		}
 		resetTranscript();
 	};
+
+	const handleClose = () => {
+		onClose();
+		setConversationId(null);
+		setOrderData(null);
+		setParsedItems([]);
+		setPendingItems([]);
+		setCompletedItems([]);
+		setConversationMessage("");
+		resetTranscript();
+	}
 	
 	return (
 		<Dialog open={isOpen} onClose={onClose} fullWidth maxWidth="sm">
@@ -97,10 +112,9 @@ function AnalyzeOrderDialogue({ isOpen, onClose, phone }) {
 				) : orderData ? (
 					<div>
 						{/* Wyświetlenie danych zamówienia */}
-						<h3>Order Summary</h3>
 						<p><strong>ID zamówienia:</strong> {orderData.id}</p>
 						<p><strong>ID konwersacji</strong> {conversationId || "Brak"}</p>
-						<p><strong>Czas rozpoczęcia:</strong> {orderData.order_start_time}</p>
+						<p><strong>Czas rozpoczęcia:</strong> {new Date(orderData.order_start_time).toLocaleString()}</p>
 						<p><strong>Numer telefonu:</strong> {phone}</p>
 						{/* Transkrypcja */}
 						{/* Komunikat z backendu */}
@@ -129,15 +143,18 @@ function AnalyzeOrderDialogue({ isOpen, onClose, phone }) {
 							Wyślij
 						</Button>
 						<p><em>Transkrypcja: </em> {transcript || "Zacznij mówić aby zobaczyć tutaj transkrypcję..."}</p>
+						<h2>Twoje zamówienie</h2>
+						<OrderSummaryView orderId={orderData.id} />
 					</div>
 				) : (
 					<DialogContentText>
 						Unable to fetch order data. Please try again.
 					</DialogContentText>
 				)}
+			
 			</DialogContent>
 			<DialogActions>
-				<Button onClick={onClose} color="primary">
+				<Button onClick={handleClose} color="primary">
 					Zakończ
 				</Button>
 			</DialogActions>

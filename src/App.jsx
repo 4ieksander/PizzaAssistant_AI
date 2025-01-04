@@ -32,7 +32,7 @@ function App() {
             </form>
             
             {/* Dialog */}
-            <AnalyzeOrderDialogue isOpen={isDialogOpen} onClose={closeDialog} phone={phone} />
+            <AnalyzeOrderDialogue isOpen={isDialogOpen} onClose={closeDialog} phone={phone}/>
         </div>
     );
 }
