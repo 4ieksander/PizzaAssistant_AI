@@ -86,7 +86,23 @@ class OrderSchema(BaseModel):
     id: int
     order_start_time: datetime
     total_price: float = None
-    client_id: int  # Tylko ID klienta
-    pizzas: List[int] = dataclasses.field(default_factory=list)  # Tylko ID pizzy
-
+    client_id: int
+    pizzas: List[int] = dataclasses.field(default_factory=list)
     model_config = ConfigDict(from_attributes=True)
+
+class TranscriptionItem(BaseModel):
+    id: int
+    content: str
+    parsed: str
+    updated_slots: str
+    
+    class Config:
+        from_attributes = True
+
+class TranscriptionHistoryResponse(BaseModel):
+    order_id: int
+    items: List[TranscriptionItem]
+
+    class Config:
+        from_attributes = True
+        
