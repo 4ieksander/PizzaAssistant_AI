@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends
 from app.database import get_db
 from sqlalchemy.orm import Session
-from app.models import Client, Order, OrderPizzas, Pizza, Dough, Ingredient
-from app.schemas import InitOrderRequest, OrderSchema
+from app.models import Client, Order, OrderPizzas, Pizza, Dough, Ingredient, TranscriptionLog
+from app.schemas import InitOrderRequest, OrderSchema, TranscriptionHistoryResponse, TranscriptionItem
 from app.utils.logger import get_logger
 from app.schemas import OrderItemSummary, OrderSummaryResponse
 
@@ -114,3 +114,29 @@ def get_order_summary(order_id: int, db: Session = Depends(get_db)):
         total_cost=total_cost
     )
     return summary
+
+@router.get("/transcript/{order_id}", response_model=TranscriptionHistoryResponse)
+def get_transcription_history(order_id: int, db: Session = Depends(get_db)):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    transcriptions_history: List[TranscriptionItem]= []
+    transcriptions = db.query(TranscriptionLog).filter(TranscriptionLog.order_id == order_id).all()
+    for row in transcriptions:
+        if not row.parsed:
+            row.parsed = "N/A"
+        if not row.updated_slots:
+            row.updated_slots = "N/A"
+        if not row.content:
+            continue
+        transcriptions_history.append(TranscriptionItem(
+            id=row.id,
+            content=row.content,
+            parsed=row.parsed,
+            updated_slots=row.updated_slots
+        ))
+    response = TranscriptionHistoryResponse(
+        order_id=order_id,
+        items=transcriptions_history
+        )
+    return response

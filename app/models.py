@@ -12,6 +12,13 @@ pizza_ingredients = Table(
     Column("ingredient_id", Integer, ForeignKey("ingredients.id", ondelete="CASCADE"), primary_key=True)
 )
 
+order_transcripts = Table(
+    "order_transcripts",
+    Base.metadata,
+    Column("order_id", Integer, ForeignKey("orders.id", ondelete="CASCADE"), primary_key=True),
+    Column("transcript_id", Integer, ForeignKey("transcription_logs.id", ondelete="CASCADE"), primary_key=True)
+)
+
 class AdditionalIngredient(Base):
     __tablename__ = "additional_ingredients"
 
@@ -69,7 +76,16 @@ class Client(Base):
     street = relationship("Street", back_populates="clients", lazy="joined")
     apartment = Column(String, nullable=True)
     orders = relationship("Order", back_populates="client")
-
+    
+class TranscriptionLog(Base):
+    __tablename__ = "transcription_logs"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    content = Column(String, nullable=False)
+    updated_slots = Column(String, nullable=True)
+    parsed = Column(String, nullable=True)
+    order_id = Column(Integer, ForeignKey("orders.id", ondelete="CASCADE"))
+    orders = relationship("Order", secondary=order_transcripts, back_populates="transcripts_history")
+    
     
 class Order(Base):
     __tablename__ = "orders"
@@ -79,19 +95,21 @@ class Order(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     client = relationship("Client", back_populates="orders")
     pizzas = relationship("Pizza", secondary='order_pizzas' ,back_populates="orders")
-
-class Street(Base):
-    __tablename__ = "streets"
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    name = Column(String, nullable=False)
-    clients = relationship("Client", back_populates="street")
+    transcripts_history = relationship("TranscriptionLog", secondary=order_transcripts, back_populates="orders",
+                                       collection_class=list)
+    
+    class Street(Base):
+        __tablename__ = "streets"
+        id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+        name = Column(String, nullable=False)
+        clients = relationship("Client", back_populates="street")
     
     
 #     # addresses = relationship("Address", back_populates="street")
 #
 # class Address(Base):
 #     __tablename__ = "addresses"
-#     # id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+#     # _id = Column(Integer, primary_key=True, index=True, autoincrement=True)
 #     # street_id = Column(Integer, ForeignKey("streets.id"), nullable=False)
 #     street = relationship("Street", back_populates="addresses")
 #     building_number = Column(String, nullable=False)

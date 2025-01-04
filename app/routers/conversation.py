@@ -8,13 +8,19 @@ a po uzupełnieniu braków aktualizujemy i ewentualnie zmieniamy is_partial=Fals
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Dict, List, Optional
+import ast
 import uuid
 
-from ..database import get_db
+from app.utils.logger import get_logger
+from app.database import get_db
 from sqlalchemy.orm import Session
 
 from .analyze_order import PizzaParser
-from ..models import Ingredient, Order, Dough, Pizza, OrderPizzas, AdditionalIngredient
+from app.models import Ingredient, Order, Dough, Pizza, OrderPizzas, AdditionalIngredient, TranscriptionLog
+
+
+log = get_logger(__name__)
+
 
 
 router = APIRouter()
@@ -62,7 +68,7 @@ def _fill_db_item(session: Session, order_id: int, slot: dict) -> int:
     )
     session.add(new_item)
     session.commit()
-    session.refresh(new_item)  # żeby mieć new_item.id
+    session.refresh(new_item)  # żeby mieć new_item._id
     
     for (ing_name, ing_qty) in slot["extras"]:
         ing_obj = session.query(Ingredient).filter(Ingredient.name.ilike(ing_name)).first()
@@ -92,7 +98,7 @@ def _update_db_item(session: Session, db_id: int, slot: dict):
         pizza_obj = session.query(Pizza).filter(Pizza.name.ilike(slot["pizza"])).first()
         if pizza_obj:
             db_item.pizza_id = pizza_obj.id
-
+    
     # Ustawiamy dough_id, jeśli slot ma wypełnione dough
     if slot["dough"]["big_size"] is not None and slot["dough"]["on_thick_pastry"] is not None:
         query = session.query(Dough)
@@ -123,6 +129,54 @@ def _update_db_item(session: Session, db_id: int, slot: dict):
     session.commit()
 
 
+def _compare_slots(updated_slots, existing_slots=None):
+    """
+    Porównuje dwie listy słowników i zwraca różnice jako sformatowany string.
+    """
+    existing_map ={}
+    updated_map = {}
+    if existing_slots:
+        for slot in existing_slots:
+            existing_map[slot["db_id"]] = {
+                "pizza":           slot["pizza"],
+                "pizza_count":     slot["pizza_count"],
+                "big_size":        slot["dough"]["big_size"],
+                "on_thick_pastry": slot["dough"]["on_thick_pastry"],
+                "extras":   [f"{ing}-{qty}" for ing, qty in slot["extras"]]
+                }
+    for slot in updated_slots:
+        updated_map[slot["db_id"]] = {
+            "pizza":           slot["pizza"],
+            "pizza_count":     slot["pizza_count"],
+            "big_size":        slot["dough"]["big_size"],
+            "on_thick_pastry": slot["dough"]["on_thick_pastry"],
+            "extras":   [f"{ing}-{qty}" for ing, qty in slot["extras"]]
+            }
+        
+    differences = []
+    log.info(f"Existing slots: {existing_map}")
+    log.info(f"Updated slots: {updated_map}")
+    
+    for slot_id, updated_slot in updated_map.items():
+        if slot_id not in existing_map:
+            differences.append(f"Nowy slot: {updated_slot}")
+        else:
+            existing_slot = existing_map[slot_id]
+            for key, value in updated_slot.items():
+                if key not in existing_slot:
+                    differences.append(f"Nowa zmienna w slocie {slot_id}: {key} = {value}")
+                elif existing_slot[key] != value:
+                    differences.append(f"Zmieniona zmienna w slocie {slot_id}: {key} (z '{existing_slot[key]}' na '{value}')")
+
+    for slot_id in existing_map.keys():
+        if slot_id not in updated_map:
+            differences.append(f"Slot usunięty: {existing_map[slot_id]}")
+
+    result = ", ".join(differences) if  differences else "Brak zmian"
+    return result
+
+
+
 @router.post("/start")
 def start_conversation(data: StartConversationRequest, db: Session = Depends(get_db)):
     conversation_id = str(uuid.uuid4())
@@ -132,7 +186,7 @@ def start_conversation(data: StartConversationRequest, db: Session = Depends(get
 
     parser = PizzaParser(db)
     parsed_items = parser.parse_order(data.initial_text)
-
+    
     if not parsed_items:
         # Tworzymy pusty stan
         CONVERSATION_STATES[conversation_id] = {
@@ -145,11 +199,17 @@ def start_conversation(data: StartConversationRequest, db: Session = Depends(get
             "message": "Nie zrozumiałem zamówienia. Podaj proszę, co chcesz zamówić."
         }
 
-    # Zapiszmy każdy slot do DB
     for slot in parsed_items:
         db_id = _fill_db_item(db, data.order_id, slot)
         slot["db_id"] = db_id  # zapamiętujemy, który wiersz w bazie to jest
-
+    
+    parse_transcription_results = _compare_slots(parsed_items)
+    log.info(f'Parse transcription "%s" results: %s', data.initial_text, parse_transcription_results)
+    new_transcription_log = TranscriptionLog(content=data.initial_text, updated_slots=parse_transcription_results, parsed=str(parsed_items),order_id=data.order_id)
+    db.add(new_transcription_log)
+    db.commit()
+    
+    
     # Sprawdźmy, czy któryś slot ma braki
     incomplete = any(len(s["missing_info"]) > 0 for s in parsed_items)
     status = "awaiting_missing_info" if incomplete else "all_info_provided"
@@ -178,17 +238,16 @@ def continue_conversation(data: ContinueConversationRequest, db: Session = Depen
     conv_state = CONVERSATION_STATES.get(data.conversation_id)
     if not conv_state:
         return {"success": False, "message": "Nie znaleziono konwersacji o tym ID."}
-
+    
+    exists_slots = conv_state["slots"]
     parser = PizzaParser(db)
-    existing_slots = conv_state["slots"]
-    updated_slots = parser.parse_order_in_context(data.user_text, existing_slots)
-
-    old_len = len(existing_slots)
+    updated_slots = parser.parse_order_in_context(data.user_text, exists_slots)
+    
+    old_len = len(exists_slots)
     new_len = len(updated_slots)
     if new_len > old_len:
         new_slots = updated_slots[old_len:]
         for s in new_slots:
-            # nadaj db_id
             db_id = _fill_db_item(db, conv_state["order_id"], s)
             s["db_id"] = db_id
     else:
@@ -206,7 +265,6 @@ def continue_conversation(data: ContinueConversationRequest, db: Session = Depen
     incomplete = any(len(s["missing_info"]) > 0 for s in updated_slots)
     status = "awaiting_missing_info" if incomplete else "all_info_provided"
     
-
     conv_state["slots"] = updated_slots
     conv_state["status"] = status
     
@@ -215,6 +273,17 @@ def continue_conversation(data: ContinueConversationRequest, db: Session = Depen
         msg += " – Wciąż brakuje pewnych informacji."
     else:
         msg += " – Wszystkie informacje kompletne."
+        
+    latest_transcription = db.query(TranscriptionLog).filter(
+            TranscriptionLog.order_id == conv_state["order_id"]).order_by(TranscriptionLog.id.desc()).first()
+    parsed_slots_before = ast.literal_eval(latest_transcription.parsed)
+    
+    parse_transcription_results = _compare_slots(updated_slots, parsed_slots_before)
+    log.info(f'Parse transcription "%s" results: %s', data.user_text, parse_transcription_results)
+    new_transcription_log = TranscriptionLog(content=data.user_text, updated_slots=parse_transcription_results,
+                                             parsed=str(updated_slots), order_id=conv_state["order_id"])
+    db.add(new_transcription_log)
+    db.commit()
 
     return {
         "conversation_id": data.conversation_id,

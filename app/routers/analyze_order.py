@@ -47,7 +47,9 @@ REFERENCE_WORDS_FOR_NEXT = {
     "jedna": 1,
     "druga": 2,
     "trzecia": 3,
-    "czwarta": 4
+    "czwarta": 4,
+    "piąta": 5,
+    "kolejna": 1,
 }
 
 def _map_synonym_with_dict(word: str, synonyms_dict: dict) -> str:
@@ -128,7 +130,6 @@ def _detect_slots(tokens, slots: List[dict]) -> bool:
         t = tokens[i]
         lemma = t.lemma_
 
-        # Sprawdź, czy to “dwie/dwa/trzy” i dalej “pizza/pizze”
         if lemma in POLISH_NUMBERS and (i + 1) < len(tokens):
             next_lemma = tokens[i + 1].lemma_
             if "pizza" in next_lemma:
@@ -155,14 +156,15 @@ def _create_slot() -> dict:
     """
     Tworzy nowy slot opisujący pojedynczą sztukę pizzy.
     """
+    log.info("Tworzę nowy slot z id=%s")
     return {
-        "pizza": None,
-        "pizza_count": 1,
-        "dough": {
+        "pizza":        None,
+        "pizza_count":  1,
+        "dough":        {
             "big_size": None,
             "on_thick_pastry": None,
         },
-        "extras": [],
+        "extras":       [],
         "missing_info": []
     }
 
@@ -173,7 +175,7 @@ def _assign_attributes(tokens, slots: List[dict], all_pizzas: List[str],
     Przypisuje do slotów atrybuty takie jak nazwa pizzy, rozmiar, grubość.
     Jeśli nie ma żadnego slotu, zapisuje w 'common_attributes', by potem scalić je do wszystkich.
     """
-    last_count = None  # zapamiętamy liczbę sztuk
+    last_count = None
     i = 0
     while i < len(tokens):
         t = tokens[i]
@@ -463,7 +465,7 @@ class PizzaParser:
 #
 # @router.post("/analyze-order")
 # def analyze_order(data: AnalyzeOrderRequest, db: Session = Depends(get_db)):
-#     order = db.query(Order).filter(Order.id == data.order_id).first()
+#     order = db.query(Order).filter(Order._id == data.order_id).first()
 #     if not order:
 #         return {"success": False, "message": f"Zamówienie {data.order_id} nie istnieje."}
 #
@@ -489,9 +491,9 @@ class PizzaParser:
 #
 #         if pizza_obj and dough_obj:
 #             new_item = OrderPizzas(
-#                 order_id=order.id,
-#                 pizza_id=pizza_obj.id,
-#                 dough_id=dough_obj.id,
+#                 order_id=order._id,
+#                 pizza_id=pizza_obj._id,
+#                 dough_id=dough_obj._id,
 #                 quantity=slot["pizza_count"]
 #                     )
 #             db.add(new_item)
