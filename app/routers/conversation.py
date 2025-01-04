@@ -1,7 +1,7 @@
 # path/filename: routers/manage_conversation.py
 """
 Obsługa konwersacji i stanu zamówienia.
-Zarządza sekwencją dialogu, używa parsera (AdvancedPizzaParser) do interpretacji wypowiedzi.
+Zarządza sekwencją dialogu, używa parsera (PizzaParser) do interpretacji wypowiedzi.
 """
 
 from fastapi import APIRouter, Depends
@@ -12,7 +12,7 @@ import uuid
 from ..database import get_db
 from sqlalchemy.orm import Session
 
-from .analyze_order import AdvancedPizzaParser, AnalyzeOrderRequest
+from .analyze_order import PizzaParser, AnalyzeOrderRequest
 from ..models import Order, order_pizzas
 
 router = APIRouter()
@@ -84,7 +84,7 @@ def start_conversation(data: StartConversationRequest, db: Session = Depends(get
     if not order:
         return {"success": False, "message": f"Zamówienie {data.order_id} nie istnieje."}
 
-    analyzer = AdvancedPizzaParser(db)
+    analyzer = PizzaParser(db)
     parsed_items = analyzer.parse_order(data.initial_text)
 
     # Jeśli parser nie zrozumiał niczego
@@ -139,7 +139,7 @@ def continue_conversation(data: ContinueConversationRequest, db: Session = Depen
     pending = conv_state["pending_items"]
     completed = conv_state["completed_items"]
 
-    analyzer = AdvancedPizzaParser(db)
+    analyzer = PizzaParser(db)
     new_parsed_items = analyzer.parse_order(data.user_text)
 
     if status == "awaiting_missing_info":
@@ -226,7 +226,7 @@ def finish_conversation(conversation_id: str, db: Session = Depends(get_db)):
     if not order:
         return {"success": False, "message": f"Zamówienie {order_id} nie istnieje."}
 
-    analyzer = AdvancedPizzaParser(db)
+    analyzer = PizzaParser(db)
 
     added_info = []
     for item in completed_items:

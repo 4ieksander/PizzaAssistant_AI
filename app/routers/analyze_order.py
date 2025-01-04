@@ -42,9 +42,6 @@ THICKNESS_SYNONYMS = {
     "gruba": ["gruby", "grube", "grubym"],
     "cienka": ["cienki", "cienkie", "cienkim"]
 }
-GLUTEN_SYNONYMS = {
-    "bezglutenowa": ["bezglutenowe", "bezglutenowy", "bezglutenu"]
-}
 REFERENCE_WORDS_FOR_NEXT = {
     "jedna": 1,
     "druga": 2,
@@ -138,45 +135,10 @@ def _create_slot() -> dict:
     }
 
 
-def _detect_slots(tokens, slots: List[dict]) -> bool:
-    """
-    Wyszukuje w tokenach fragmenty 'dwa/trzy pizze' lub 'pizza'
-    i dodaje odpowiednią liczbę slotów. Zwraca True, jeśli rozbiliśmy
-    liczbę slotów, w przeciwnym razie False (dla logiki 'pierwsze spotkanie z pizza').
-    """
-    total_slots_created = False
-    i = 0
-    while i < len(tokens):
-        t = tokens[i]
-        lemma = t.lemma_
-
-        # Sprawdź, czy to “dwie/dwa/trzy” i dalej “pizza/pizze”
-        if lemma in POLISH_NUMBERS and (i + 1) < len(tokens):
-            next_lemma = tokens[i + 1].lemma_
-            if "pizza" in next_lemma:
-                count_val = POLISH_NUMBERS[lemma]
-                for _ in range(count_val):
-                    slots.append(_create_slot())
-                total_slots_created = True
-                i += 2
-                continue
-
-        # Sprawdź, czy to “pizza” w liczbie pojedynczej (bez 'dwie/trzy')
-        if lemma == "pizza" and not total_slots_created:
-            slots.append(_create_slot())
-            total_slots_created = True
-            i += 1
-            continue
-
-        i += 1
-
-    return total_slots_created
-
-
 def _assign_attributes(tokens, slots: List[dict], all_pizzas: List[str],
                        common_attributes: dict):
     """
-    Przypisuje do slotów atrybuty takie jak nazwa pizzy, rozmiar, grubość, bezgluten.
+    Przypisuje do slotów atrybuty takie jak nazwa pizzy, rozmiar, grubość.
     Jeśli nie ma żadnego slotu, zapisuje w 'common_attributes', by potem scalić je do wszystkich.
     """
     i = 0
@@ -259,7 +221,7 @@ def _assign_extras(tokens, slots: List[dict], all_ingredients: List[str],
         i += 1
 
 
-class AdvancedPizzaParser:
+class PizzaParser:
     def __init__(self, db: Session):
         self.db = db
         self.nlp = nlp
@@ -282,9 +244,6 @@ class AdvancedPizzaParser:
             "extras": []
         }
         slots: List[dict] = []
-
-        total_slots_created = _detect_slots(tokens, slots)
-        log.info("Total slots created: %s", total_slots_created)
 
         _assign_attributes(tokens, slots, self.all_pizzas, common_attributes)
         _assign_extras(tokens, slots, self.all_ingredients, common_attributes)
@@ -315,7 +274,7 @@ def analyze_order(data: AnalyzeOrderRequest, db: Session = Depends(get_db)):
     if not order:
         return {"success": False, "message": f"Zamówienie {data.order_id} nie istnieje."}
 
-    parser = AdvancedPizzaParser(db)
+    parser = PizzaParser(db)
     parsed_items = parser.parse_order(data.transcription)
 
     if not parsed_items:
