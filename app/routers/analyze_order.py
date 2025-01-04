@@ -121,69 +121,48 @@ def fuzzy_find_ingredient(txt: str, ingredients: List[str]) -> Tuple[str, int]:
 
 
 def _detect_slot_references(tokens, existing_slots):
-    """
-    Przeszukuje tokeny w poszukiwaniu wzorca "do tej X" / "w tej X" / "dla X pizzy"
-    i zwraca index slotu (int), do którego user się odnosi, lub None jeśli nie znaleziono.
-
-    Przykłady:
-      - "do tej pierwszej" => slot 0
-      - "w tej drugiej" => slot 1
-      - "do tej margherity" => slot, który ma pizza = "margherita"
-      - "do pizzy numer jeden" => slot 0
-      - "dla mojej drugiej" => slot 1
-      - "do mojej hawajskiej" => slot, który ma "hawajska" w 'pizza'
-    """
     chosen_slot_index = None
     i = 0
     while i < len(tokens):
+        if i == 6:
+            break;
         t = tokens[i].lemma_.lower()
-        if t in ("do", "w", "dla"):
+        if t in ("do", "w"):
             if (i + 1) < len(tokens):
                 maybe_tej = tokens[i + 1].lemma_.lower()
-                if maybe_tej in ("tej", "mojej", "twojej"):
-                    # Jeszcze dalej
-                    if (i + 2) < len(tokens):
-                        ref_word = tokens[i + 2].lemma_.lower()
-                        # Próbujemy klucza w REFERENCE_SLOT_WORDS
-                        if ref_word in REFERENCE_SLOT_WORDS:
-                            number = REFERENCE_SLOT_WORDS[ref_word]
+                if maybe_tej in ("tej"):
+                     if (i + 2) < len(tokens):
+                        lem =  tokens[i + 2].lemma_.lower()
+                        log.info("ref_word: %s -> lema %s", tokens[i+2].text, lem)
+                        if lem in REFERENCE_SLOT_WORDS:
+                            number = REFERENCE_SLOT_WORDS[lem]
                             slot_idx = number - 1
                             if slot_idx < len(existing_slots):
                                 chosen_slot_index = slot_idx
                                 break
-                        else:
-                            # Może nazwa pizzy?
-                            # "do tej margherity"
-                            # Dla uproszczenia spróbujemy exact substring
-                            for s_index, s in enumerate(existing_slots):
-                                if s["pizza"] and ref_word in s["pizza"].lower():
-                                    chosen_slot_index = s_index
+                        pizza_name = fuzzy_match_pizza(tokens[i+2], [s.get("pizza") for s in existing_slots])
+                        if pizza_name:
+                            for i, slot in enumerate(existing_slots):
+                                if slot["pizza"] == pizza_name:
+                                    chosen_slot_index = i
                                     break
-                            if chosen_slot_index is not None:
-                                break
-                # Może "do pizzy numer jeden"
                 elif maybe_tej in ("pizzy", "pizze"):
-                    # Sprawdzamy dalej "numer" / "nr"
                     if (i + 2) < len(tokens):
                         next_lemma = tokens[i + 2].lemma_.lower()
-                        if next_lemma in ("numer", "nr") and (i + 3) < len(tokens):
-                            maybe_num = tokens[i + 3].lemma_.lower()
-                            if maybe_num in REFERENCE_SLOT_WORDS:
-                                slot_idx = REFERENCE_SLOT_WORDS[maybe_num] - 1
+                        if next_lemma in ("numer") and (i + 3) < len(tokens):
+                            if detect_number_if_any(tokens[i+3], return_none=True):
+                                slot_idx = detect_number_if_any(tokens[i+3]) -1
                                 if slot_idx < len(existing_slots):
                                     chosen_slot_index = slot_idx
                                     break
                         else:
-                            # "do pizzy hawajskiej"?
-                            # sprawdzamy fuzzy w existing_slots
-                            for s_index, s in enumerate(existing_slots):
-                                if s["pizza"] and next_lemma in s["pizza"].lower():
-                                    chosen_slot_index = s_index
-                                    break
-                            if chosen_slot_index is not None:
-                                break
-        i += 1
-
+                            pizza_name = fuzzy_match_pizza(tokens[i+2].text, [s.get("pizza") for s in existing_slots])
+                            if pizza_name:
+                                for i, slot in enumerate(existing_slots):
+                                    if slot["pizza"] == pizza_name:
+                                        chosen_slot_index = i
+                                        break
+                            i += 1
     return chosen_slot_index
 
 
