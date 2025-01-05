@@ -4,6 +4,7 @@ Rozbudowana wersja algorytmu, podzielona na mniejsze funkcje dla większej czyte
 Wykrywa kilka osobnych pizz różniących się atrybutami ciasta, dopasowuje nazwy pizz
 (fuzzy match), rozróżnia liczbę sztuk, wykrywa sosy, dodatki i braki danych.
 """
+from celery.worker.control import active
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Tuple
@@ -50,7 +51,17 @@ REFERENCE_SLOT_WORDS  = {
     "czwarta": 4,
     "piąta": 5,
 }
-
+NEW_SLOT_WORDS = {
+    "nowa": 1,
+    "kolejna": 1,
+    "następna": 1,
+    "następnie": 1,
+    "jeszcze": 1,
+    "dodatkowa": 1,
+    "dodatkowo": 1,
+    "inna": 1,
+    "inny": 1,
+    }
 def _map_synonym_with_dict(word: str, synonyms_dict: dict, return_none=False):
     """
     Funkcja pomocnicza do mapowania słowa na klucz, jeśli występuje w słowniku synonimów.
@@ -184,7 +195,7 @@ def _detect_pizza_count(tokens, slots: List[dict], all_pizzas: List[str])  -> bo
             next_lemma = tokens[i + 1].lemma_
             pizza_name = fuzzy_match_pizza(tokens[i+1].text, all_pizzas)
             if "pizza" in next_lemma or pizza_name:
-                count_val = detect_number_if_any(token.text, return_none=True)
+                count_val = detect_number_if_any(token, return_none=True)
                 if pizza_name:
                     log.info("Znalazłem pizzę: %s", pizza_name)
                     slots.append(_create_slot())
@@ -204,7 +215,7 @@ def _detect_pizza_count(tokens, slots: List[dict], all_pizzas: List[str])  -> bo
                 next_next_lemma = tokens[i + 2].lemma_
                 pizza_name = fuzzy_match_pizza(tokens[i+2].text, all_pizzas)
                 if "pizza" in next_next_lemma or pizza_name:
-                    count_val = detect_number_if_any(tokens[i].text)
+                    count_val = detect_number_if_any(tokens[i])
                     if pizza_name:
                         slots.append(_create_slot())
                         slots[-1]["pizza_count"] = count_val
@@ -218,6 +229,7 @@ def _detect_pizza_count(tokens, slots: List[dict], all_pizzas: List[str])  -> bo
                             slots.append(_create_slot())
                     i += 3
                     slots_created = True
+            i += 1
             continue
 
         if (lemma == "pizza" or fuzzy_match_pizza(tokens[i].text, all_pizzas)) and not slots_created:
@@ -225,7 +237,7 @@ def _detect_pizza_count(tokens, slots: List[dict], all_pizzas: List[str])  -> bo
             i += 1
             continue
         i += 1
-        log.info("slots_created: %s", slots_created)
+    log.info("slots_created: %s", slots_created)
     return slots_created
 
 
@@ -401,11 +413,6 @@ def check_for_extra_ingredient(tokens, all_ingredients, slots, common_attributes
         slot = active_slot
     elif slots:
         slot = slots[-1]
-    log.info("Dodatkowe składniki: %s", tokens)
-    """
-    Uniwersalna funkcja do sprawdzania i dodawania dodatkowych składników.
-    Obsługuje zarówno prostą, jak i złożoną strukturę tokenów.
-    """
     def add_extra_ingredient(ingredient, quantity):
         """Dodaje składnik do odpowiedniego miejsca (slotów lub wspólnych atrybutów)."""
         log.info("Dodano składnik: %s x %s", ingredient, quantity)
@@ -414,7 +421,7 @@ def check_for_extra_ingredient(tokens, all_ingredients, slots, common_attributes
         else:
             common_attributes["extras"].append((ingredient, quantity))
 
-    if tokens[0].lemma_ in ("i", "oraz"):
+    if tokens and tokens[0].lemma_ in ("i", "oraz"):
         if len(tokens) > 2:
             qty = detect_multiplier_if_any(tokens[1])
             best_ing, sc = fuzzy_find_ingredient(tokens[2].text.lower(), all_ingredients)
@@ -497,26 +504,35 @@ class PizzaParser:
                     slot_idx_ref = idx
                     break
             
+        log.info("Slot_idx_ref: %s", slot_idx_ref)
+        
         if slot_idx_ref is not None:
             active_slot = existing_slots[slot_idx_ref]
             _assign_attributes(tokens, existing_slots, self.all_pizzas, common_attributes, active_slot)
             _assign_extras_trigram(tokens, existing_slots, self.all_ingredients, common_attributes, active_slot)
             merge_and_find_missing([active_slot], common_attributes)
             return existing_slots
+        
         if slot_idx_ref is None and existing_slots and all(not slot['missing_info'] for slot in existing_slots):
             new_slots: List[dict] = []
-            _detect_pizza_count(tokens, new_slots, self.all_pizzas)
+            created_new = _detect_pizza_count(tokens, new_slots, self.all_pizzas)
+            if not created_new:
+                new_slots.append(_create_slot())
+            if len(new_slots) > 1:
+                merge_and_find_missing(new_slots[1:], common_attributes)
+            slot_idx_ref = 0
+            active_slot = new_slots[slot_idx_ref]
+            _assign_attributes(tokens, new_slots, self.all_pizzas, common_attributes, active_slot)
+            _assign_extras_trigram(tokens, new_slots, self.all_ingredients, common_attributes, active_slot)
+            
             slots_to_fill = new_slots if new_slots else existing_slots
             
             _assign_attributes(tokens, slots_to_fill, self.all_pizzas, common_attributes)
             _assign_extras_trigram(tokens, slots_to_fill, self.all_ingredients, common_attributes)
             
             merge_and_find_missing(slots_to_fill, common_attributes)
-    
-            if new_slots:
-                return existing_slots + new_slots
-            else:
-                return existing_slots
+            
+            return existing_slots + new_slots if new_slots else existing_slots
 
 #
 # @router.post("/analyze-order")
