@@ -48,8 +48,6 @@ def _fill_db_item(session: Session, order_id: int, slot: dict) -> int:
 
     dough_id = None
     if slot["dough"]["big_size"] is not None and slot["dough"]["on_thick_pastry"] is not None:
-        # w prostszej wersji – bo i tak może brakować gluten.
-        # (albo jeśli parse dopuszcza "without_gluten", też można filtrować)
         query = session.query(Dough)
         query = query.filter(Dough.big_size == slot["dough"]["big_size"])
         query = query.filter(Dough.on_thick_pastry == slot["dough"]["on_thick_pastry"])
@@ -209,13 +207,9 @@ def start_conversation(data: StartConversationRequest, db: Session = Depends(get
     db.add(new_transcription_log)
     db.commit()
     
-    
-    # Sprawdźmy, czy któryś slot ma braki
     incomplete = any(len(s["missing_info"]) > 0 for s in parsed_items)
     status = "awaiting_missing_info" if incomplete else "all_info_provided"
 
-    # Przechowujemy w pamięci minimalny stan (moglibyśmy nie przechowywać wcale,
-    # ale tu np. mamy identyfikację slotów)
     CONVERSATION_STATES[conversation_id] = {
         "order_id": data.order_id,
         "status": status,
@@ -232,7 +226,6 @@ def start_conversation(data: StartConversationRequest, db: Session = Depends(get
     }
 
 
-# ...
 @router.post("/continue")
 def continue_conversation(data: ContinueConversationRequest, db: Session = Depends(get_db)):
     conv_state = CONVERSATION_STATES.get(data.conversation_id)
@@ -258,10 +251,8 @@ def continue_conversation(data: ContinueConversationRequest, db: Session = Depen
 
     conv_state["slots"] = updated_slots
 
-    # Każdy slot, jeśli nie ma missing_info => zaktualizuj w bazie (is_partial=False)
     for slot in updated_slots:
         _update_db_item(db, slot["db_id"], slot)
-    # Ustalamy status:
     incomplete = any(len(s["missing_info"]) > 0 for s in updated_slots)
     status = "awaiting_missing_info" if incomplete else "all_info_provided"
     
@@ -276,8 +267,10 @@ def continue_conversation(data: ContinueConversationRequest, db: Session = Depen
         
     latest_transcription = db.query(TranscriptionLog).filter(
             TranscriptionLog.order_id == conv_state["order_id"]).order_by(TranscriptionLog.id.desc()).first()
-    parsed_slots_before = ast.literal_eval(latest_transcription.parsed)
-    
+    try:
+        parsed_slots_before = ast.literal_eval(latest_transcription.parsed)
+    except:
+        parsed_slots_before = []
     parse_transcription_results = _compare_slots(updated_slots, parsed_slots_before)
     log.info(f'Parse transcription "%s" results: %s', data.user_text, parse_transcription_results)
     new_transcription_log = TranscriptionLog(content=data.user_text, updated_slots=parse_transcription_results,
