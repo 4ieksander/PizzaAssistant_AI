@@ -20,7 +20,7 @@ from app.models import Order, OrderPizzas, Pizza, Dough, Ingredient
 
 log = get_logger(__name__)
 router = APIRouter()
-nlp = spacy.load("pl_core_news_sm")
+nlp = spacy.load("pl_core_news_md")
 
 class AnalyzeOrderRequest(BaseModel):
     order_id: int
@@ -49,6 +49,11 @@ REFERENCE_SLOT_WORDS  = {
     "trzecia": 3,
     "czwarta": 4,
     "piąta": 5,
+    "szósta": 6,
+    "siódma": 7,
+    "ósma": 8,
+    "dziewiąta": 9,
+    "ostatnia": 0
 }
 NEW_SLOT_WORDS = {
     "nowa": 1,
@@ -62,6 +67,19 @@ NEW_SLOT_WORDS = {
     "inny": 1,
     "domówić": 1,
     }
+
+REFERENCE_ALL_SLOTS = {
+    "wszystek": 0,
+    "każda": 0,
+    "każdej": 0,
+    "każde": 0,
+    "każdy": 0,
+    "wszystkie": 0,
+    "wszystkich": 0,
+    "wszystkim": 0,
+    "wszystkimi": 0
+    }
+    
 def _map_synonym_with_dict(word: str, synonyms_dict: dict, return_none=False):
     """
     Funkcja pomocnicza do mapowania słowa na klucz, jeśli występuje w słowniku synonimów.
@@ -149,7 +167,7 @@ def _detect_slot_references(tokens, existing_slots):
     while i < len(tokens):
         log.info("Jestem w petli %s", i)
         t = tokens[i].lemma_.lower()
-        if t in ("do", "w"):
+        if t in ("do", "w", "ta"):
             if (i + 1) < len(tokens):
                 maybe_tej = tokens[i + 1].lemma_.lower()
                 if maybe_tej in ("tej"):
@@ -168,6 +186,12 @@ def _detect_slot_references(tokens, existing_slots):
                                 if slot["pizza"] == pizza_name:
                                     chosen_slot_index = i
                                     break
+                elif tokens[i+1] in REFERENCE_SLOT_WORDS:
+                    number = REFERENCE_SLOT_WORDS[tokens[i+1]]
+                    slot_idx = number - 1
+                    if slot_idx < len(existing_slots):
+                        chosen_slot_index = slot_idx
+                        break
                 elif maybe_tej in ("pizzy", "pizze"):
                     if (i + 2) < len(tokens):
                         next_lemma = tokens[i + 2].lemma_.lower()
@@ -245,7 +269,7 @@ def _detect_pizza_count(tokens, slots: List[dict], all_pizzas: List[str])  -> Li
                             slot["dough"]["big_size"] = False
                         slot["dough"]["big_size"] = next_lemma == "duża"
                         slots.append(slot)
-                    elif (i + 3) <= len(tokens) and fuzzy_match_pizza(tokens[i+3].text, all_pizzas):
+                    elif (i + 3) < len(tokens) and fuzzy_match_pizza(tokens[i+3].text, all_pizzas):
                         slot = _create_slot()
                         slot["pizza_count"] = count_val
                         slot["pizza"] = fuzzy_match_pizza(tokens[i+3].text, all_pizzas)
@@ -253,8 +277,8 @@ def _detect_pizza_count(tokens, slots: List[dict], all_pizzas: List[str])  -> Li
                     else:
                         for _ in range(count_val):
                             slot = _create_slot()
-                            
-                            slots.append(_create_slot())
+                            slot["dough"]["big_size"] = _is_big_pizza_size(next_lemma)
+                            slots.append(slot)
                     i += 3
                     slots_created = True
                     log.info("slots: %s", slots)
@@ -506,7 +530,15 @@ class PizzaParser:
     def parse_order(self, text: str) -> List[dict]:
         doc = self.nlp(text.lower())
         tokens = list(doc)
-
+        
+        for token in doc:
+            log.info(f"{token.text}: {token.pos_}, {token.dep_}, {token.head.text}")
+        # for chunk in doc.noun_chunks:
+        #     log.info(chunk.text)
+        log.info("Text: %s", text)
+        log.info("Tokens: %s", tokens)
+        log.info("Tokens Lemma %s", [t.lemma_ for t in tokens])
+        # log.info("Existing slots: %s", existing_slots)
         common_attributes = {
             "dough": {
                 "big_size": None,
@@ -526,23 +558,18 @@ class PizzaParser:
     
     def parse_order_in_context(self, text: str, existing_slots: List[dict]) -> List[dict]:
         log.info(40*"-x-")
-        
+        reference_to_all = False
         doc = self.nlp(text.lower())
         tokens = list(doc)
+        for token in doc:
+            log.info(f"{token.text}: {token.pos_}, {token.dep_}, {token.head.text}")
         log.info("Text: %s", text)
         log.info("Tokens: %s", tokens)
+        log.info("Tokens Lemma %s", [t.lemma_ for t in tokens])
         log.info("Existing slots: %s", existing_slots)
         
         slot_idx_ref = _detect_slot_references(tokens, existing_slots)
         common_attributes = {"dough": {"big_size": None, "on_thick_pastry": None}, "extras": []}
-
-        if slot_idx_ref is None and existing_slots:
-            for idx, slot in enumerate(existing_slots):
-                if slot['missing_info']:
-                    slot_idx_ref = idx
-                    break
-            
-        log.info("Slot_idx_ref: %s", slot_idx_ref)
         
         if slot_idx_ref is not None:
             active_slot = existing_slots[slot_idx_ref]
@@ -553,11 +580,24 @@ class PizzaParser:
         
         else:
             new_slots: List[dict] = []
-            new_slots = _detect_pizza_count(tokens, new_slots, self.all_pizzas)
-            slots_to_fill = new_slots if new_slots else existing_slots
-
-            _assign_attributes(tokens, slots_to_fill, self.all_pizzas, common_attributes)
-            _assign_extras_trigram(tokens, slots_to_fill, self.all_ingredients, common_attributes)
+            if existing_slots:
+                for idx, slot in enumerate(existing_slots):
+                    if slot['missing_info']:
+                        new_slots.append(slot)
+                        existing_slots.pop(idx)
+                slots_to_fill = new_slots
+            else:
+                new_slots = _detect_pizza_count(tokens, new_slots, self.all_pizzas)
+                slots_to_fill = new_slots if new_slots else existing_slots
+            for token in tokens:
+                if token.text.lower() in REFERENCE_ALL_SLOTS:
+                    reference_to_all = True
+            if reference_to_all:
+                _assign_attributes(tokens, [], self.all_pizzas, common_attributes)
+                _assign_extras_trigram(tokens, [], self.all_ingredients, common_attributes)
+            else:
+                _assign_attributes(tokens, slots_to_fill, self.all_pizzas, common_attributes)
+                _assign_extras_trigram(tokens, slots_to_fill, self.all_ingredients, common_attributes)
             
             merge_and_find_missing(slots_to_fill, common_attributes)
             
