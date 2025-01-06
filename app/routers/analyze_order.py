@@ -99,16 +99,12 @@ def _is_big_pizza_size(lemma) -> bool:
     return _map_synonym_with_dict(lemma, SIZE_SYNONYMS) == "duża"
 
 def detect_number_if_any(token, return_none=False):
-    """
-    Zwraca int, jeśli to liczba lub polskie słowo-liczba, w przeciwnym razie 1.
-    """
     if return_none:
         val = None
     else:
         val = 1
     log.info("token: %s, %s, %s, %s", token.text, token.lemma_, token.like_num, token)
     if token.like_num:
-        log.info("like num: %s", token.text)
         try:
             val = int(token.text)
         except:
@@ -213,20 +209,12 @@ def _detect_slot_references(tokens, existing_slots):
 
 
 def _detect_pizza_count(tokens, slots: List[dict], all_pizzas: List[str])  -> List[dict]:
-    """
-    Wyszukuje w tokenach fragmenty 'dwa/trzy pizze' lub 'pizza'
-    i dodaje odpowiednią liczbę slotów. Zwraca True, jeśli rozbiliśmy
-    liczbę slotów, w przeciwnym razie False (dla logiki 'pierwsze spotkanie z pizza').
-    """
     slots_created = False
     i = 0
     while i < len(tokens):
         log.info("Pętla detect_pizza_count: %s", i)
         token = tokens[i]
         lemma = token.lemma_
-        log.info("lemma %s", lemma)
-        log.info("detect number: %s", detect_number_if_any(token))
-        log.info("detect number NULL %s", detect_number_if_any(token, return_none=True))
         if detect_number_if_any(token, return_none=True) and (i + 1) < len(tokens):
             next_lemma = tokens[i + 1].lemma_
             pizza_name = fuzzy_match_pizza(tokens[i+1].text, all_pizzas)
@@ -253,9 +241,6 @@ def _detect_pizza_count(tokens, slots: List[dict], all_pizzas: List[str])  -> Li
             elif  _map_synonym_with_dict(next_lemma, SIZE_SYNONYMS, return_none=True) and (i + 2) < len(tokens):
                 log.info("Znalazłem rozmiar pizzy: %s", tokens[i+1].text)
                 next_next_lemma = tokens[i + 2].lemma_
-                log.info("next_lemma: %s", next_lemma)
-                log.info("next_next_lemma: %s", next_next_lemma)
-                
                 pizza_name = fuzzy_match_pizza(tokens[i+2].text, all_pizzas)
                 if "pizz" in next_next_lemma or pizza_name:
                     count_val = detect_number_if_any(tokens[i])
