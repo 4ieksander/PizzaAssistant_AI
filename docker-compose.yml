@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+#  frontend:
+#    container_name: pizza-frontend
+#    build:
+#      context: ./frontend
+#    ports:
+#      - "3000:3000"
+#    depends_on:
+#      - backend
+#    volumes:
+#      - ./frontend:/app
+
+  backend:
+    container_name: pizza-backend
+    build:
+      context: .
+    ports:
+      - "8005:8005"
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://user:pizza123@db:5432/pizzeria
+    depends_on:
+      - db
+    volumes:
+      - .:/app
+
+  db:
+    image: postgres:latest
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pizza123
+      POSTGRES_DB: pizzeria
+      POSTGRES_PORT: 5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
